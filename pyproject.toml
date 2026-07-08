@@ -16,9 +16,14 @@ dependencies = [
 deep = [
   "torch>=2",
 ]
-test = [
+
+[dependency-groups]
+dev = [
   "pytest>=7",
 ]
+
+[tool.setuptools.packages.find]
+include = ["cfr_deep_stack*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

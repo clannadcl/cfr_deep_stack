@@ -23,10 +23,14 @@ public-state value network and depth-limited continual re-solving loop.
 ## Quick Start
 
 ```bash
-python3 -m venv .venv
-. .venv/bin/activate
-python -m pip install -e ".[test]"
-pytest
+uv sync --group dev
+uv run pytest
+```
+
+To install the optional neural-network stack later:
+
+```bash
+uv sync --group dev --extra deep
 ```
 
 The local baseline does not require `pyspiel`. The copied OpenSpiel files in
