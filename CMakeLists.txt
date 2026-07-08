@@ -1,0 +1,59 @@
+cmake_minimum_required(VERSION 3.20)
+
+project(fisher LANGUAGES CXX)
+
+option(FISHER_BUILD_PYBIND "Build the Python pybind11 extension" ON)
+option(FISHER_BUILD_TESTS "Build C++ unit tests" ON)
+
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
+add_library(fisher_core STATIC
+  csrc/src/algorithm/cfr.cc
+  csrc/src/game/kuhn.cc
+)
+
+target_include_directories(fisher_core
+  PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/csrc/include
+)
+
+target_compile_options(fisher_core
+  PRIVATE
+    $<$<CXX_COMPILER_ID:Clang,AppleClang,GNU>:-Wall -Wextra -Wpedantic>
+)
+
+if(FISHER_BUILD_TESTS)
+  enable_testing()
+
+  add_executable(kuhn_cfr_test
+    csrc/tests/kuhn_cfr_test.cc
+  )
+
+  target_link_libraries(kuhn_cfr_test
+    PRIVATE
+      fisher_core
+  )
+
+  add_test(NAME kuhn_cfr_test COMMAND kuhn_cfr_test)
+endif()
+
+if(FISHER_BUILD_PYBIND)
+  find_package(Python COMPONENTS Interpreter Development.Module REQUIRED)
+  find_package(pybind11 CONFIG REQUIRED)
+
+  pybind11_add_module(_core
+    csrc/src/binding/pybind.cc
+  )
+
+  target_link_libraries(_core
+    PRIVATE
+      fisher_core
+  )
+
+  set_target_properties(_core PROPERTIES
+    LIBRARY_OUTPUT_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/pysrc/fisher
+  )
+endif()

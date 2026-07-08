@@ -1,30 +1,26 @@
 [build-system]
-requires = ["setuptools>=61"]
+requires = ["setuptools>=61", "pybind11>=2.12"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "cfr-deep-stack"
+name = "fisher"
 version = "0.1.0"
-description = "CFR-average and DeepStack-style poker solver workbench"
+description = "C++ CFR benchmark for Kuhn poker"
 readme = "README.md"
 requires-python = ">=3.9"
 dependencies = [
-  "numpy>=1.21",
-]
-
-[project.optional-dependencies]
-deep = [
-  "torch>=2",
 ]
 
 [dependency-groups]
 dev = [
   "pytest>=7",
+  "pybind11>=2.12",
 ]
 
 [tool.setuptools.packages.find]
-include = ["cfr_deep_stack*"]
+where = ["pysrc"]
+include = ["fisher*"]
 
 [tool.pytest.ini_options]
-testpaths = ["tests"]
-pythonpath = ["."]
+testpaths = ["pysrc/tests"]
+pythonpath = ["pysrc"]
