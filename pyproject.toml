@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cfr-deep-stack"
+version = "0.1.0"
+description = "CFR-average and DeepStack-style poker solver workbench"
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = [
+  "numpy>=1.21",
+]
+
+[project.optional-dependencies]
+deep = [
+  "torch>=2",
+]
+test = [
+  "pytest>=7",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
