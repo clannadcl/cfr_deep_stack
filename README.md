@@ -6,6 +6,8 @@ The C++ backend owns the game tree, CFR solver, policy-value evaluation, and
 Nash exploitability calculation. Python is only a thin configuration and pytest
 benchmark layer.
 
+Development conventions are documented in `CONTRIBUTING.md`.
+
 ## Layout
 
 - `csrc/include`: C++ public headers.

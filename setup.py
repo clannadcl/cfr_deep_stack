@@ -27,6 +27,8 @@ ext_modules = [
             "csrc/src/binding/pybind.cc",
             "csrc/src/algorithm/cfr.cc",
             "csrc/src/game/kuhn.cc",
+            "csrc/src/game/poker/poker_card.cc",
+            "csrc/src/game/poker/poker_cards.cc",
         ],
         include_dirs=["csrc/include"],
         cxx_std=17,

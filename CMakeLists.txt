@@ -13,6 +13,8 @@ set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 add_library(fisher_core STATIC
   csrc/src/algorithm/cfr.cc
   csrc/src/game/kuhn.cc
+  csrc/src/game/poker/poker_card.cc
+  csrc/src/game/poker/poker_cards.cc
 )
 
 target_include_directories(fisher_core
@@ -29,7 +31,7 @@ if(FISHER_BUILD_TESTS)
   enable_testing()
 
   add_executable(kuhn_cfr_test
-    csrc/tests/kuhn_cfr_test.cc
+    csrc/tests/algorithm/cfr_test.cc
   )
 
   target_link_libraries(kuhn_cfr_test
@@ -38,6 +40,28 @@ if(FISHER_BUILD_TESTS)
   )
 
   add_test(NAME kuhn_cfr_test COMMAND kuhn_cfr_test)
+
+  add_executable(poker_card_test
+    csrc/tests/game/poker/poker_card_test.cc
+  )
+
+  target_link_libraries(poker_card_test
+    PRIVATE
+      fisher_core
+  )
+
+  add_test(NAME poker_card_test COMMAND poker_card_test)
+
+  add_executable(poker_cards_test
+    csrc/tests/game/poker/poker_cards_test.cc
+  )
+
+  target_link_libraries(poker_cards_test
+    PRIVATE
+      fisher_core
+  )
+
+  add_test(NAME poker_cards_test COMMAND poker_cards_test)
 endif()
 
 if(FISHER_BUILD_PYBIND)
