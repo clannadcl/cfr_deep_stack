@@ -113,6 +113,9 @@ int main() {
   PokerCardsIsomorphicHoleBoardIndex hole_board_index;
   const hand_index_t preflop_hand_index =
       hole_board_index.GetIndex(PokerCards("AcKd"), PokerCards());
+  Expect(preflop_hand_index ==
+             hole_board_index.GetIndex(PokerCards("KdAc"), PokerCards()),
+         "preflop hole-card order should not change index");
   HoleBoardCards preflop_cards =
       hole_board_index.GetCards(PokerRound::kPreflop, preflop_hand_index);
   Expect(hole_board_index.GetIndex(preflop_cards.hole_cards,
@@ -122,6 +125,10 @@ int main() {
 
   const hand_index_t flop_hand_index =
       hole_board_index.GetIndex(PokerCards("AcKd"), PokerCards("2c3d4h"));
+  Expect(flop_hand_index ==
+             hole_board_index.GetIndex(PokerCards("KdAc"),
+                                       PokerCards("2c3d4h")),
+         "postflop hole-card order should not change index");
   HoleBoardCards flop_cards =
       hole_board_index.GetCards(PokerRound::kFlop, flop_hand_index);
   Expect(hole_board_index.GetIndex(flop_cards.hole_cards, flop_cards.board) ==

@@ -1,9 +1,7 @@
 #include "game/poker/poker_cards_isomorphic_index.h"
 
-#include <algorithm>
 #include <array>
 #include <stdexcept>
-#include <string>
 
 namespace fisher::game::poker {
 namespace {
@@ -76,7 +74,8 @@ std::array<int, kNumSuits> BuildSuitMap(
 
   for (std::size_t index = 0; index < from_prefix.size(); ++index) {
     if (from_prefix[index].Rank() != to_prefix[index].Rank()) {
-      throw std::runtime_error("Cannot map representatives with different ranks");
+      throw std::runtime_error(
+          "Cannot map representatives with different ranks");
     }
 
     const int from_suit = static_cast<int>(from_prefix[index].Suit());
@@ -137,7 +136,8 @@ std::vector<PokerCard> AlignToPreviousPrefix(
 
 void ValidateHoleBoard(const PokerCards& hole_cards, const PokerCards& board) {
   if (hole_cards.Size() != 2) {
-    throw std::invalid_argument("Hold'em hole cards must contain exactly 2 cards");
+    throw std::invalid_argument(
+        "Hold'em hole cards must contain exactly 2 cards");
   }
   RoundFromBoardSize(board.Size());
   if (hole_cards.HasCollision(board)) {
@@ -205,7 +205,8 @@ PokerCardsIsomorphicBoardIndex::~PokerCardsIsomorphicBoardIndex() {
   FreeInitialized(&indexers_, &initialized_);
 }
 
-hand_index_t PokerCardsIsomorphicBoardIndex::GetIndex(const PokerCards& board) const {
+hand_index_t PokerCardsIsomorphicBoardIndex::GetIndex(
+    const PokerCards& board) const {
   const PokerRound round = RoundFromBoardSize(board.Size());
   if (round == PokerRound::kPreflop) {
     throw std::invalid_argument("Board index requires 3, 4, or 5 board cards");
@@ -215,8 +216,8 @@ hand_index_t PokerCardsIsomorphicBoardIndex::GetIndex(const PokerCards& board) c
   return hand_index_last(&indexers_[RoundIndex(round)], cards.data());
 }
 
-PokerCards PokerCardsIsomorphicBoardIndex::GetBoard(PokerRound round,
-                                           hand_index_t index) const {
+PokerCards PokerCardsIsomorphicBoardIndex::GetBoard(
+    PokerRound round, hand_index_t index) const {
   if (round == PokerRound::kPreflop) {
     throw std::invalid_argument("Board indexer does not support preflop");
   }
@@ -234,8 +235,7 @@ PokerCards PokerCardsIsomorphicBoardIndex::GetBoard(PokerRound round,
   const hand_index_t previous_index = GetIndex(PokerCards(raw_previous));
   const PokerCards previous_representative =
       GetBoard(previous_round, previous_index);
-  return PokerCards(
-      AlignToPreviousPrefix(previous_representative.Cards(), raw));
+  return PokerCards(AlignToPreviousPrefix(previous_representative.Cards(), raw));
 }
 
 PokerCards PokerCardsIsomorphicBoardIndex::GetNewBoardCards(
@@ -314,26 +314,31 @@ hand_index_t PokerCardsIsomorphicHoleBoardIndex::GetIndex(
   ValidateHoleBoard(hole_cards, board);
 
   std::vector<uint8_t> cards = ToCardIds(board);
-  std::vector<uint8_t> hole_ids = ToCardIds(hole_cards);
+  std::vector<uint8_t> hole_ids = ToCardIds(PokerHand(hole_cards).ToPokerCards());
   cards.insert(cards.end(), hole_ids.begin(), hole_ids.end());
   return hand_index_last(&indexers_[RoundIndex(round)], cards.data());
 }
 
-HoleBoardCards PokerCardsIsomorphicHoleBoardIndex::GetCards(PokerRound round,
-                                                  hand_index_t index) const {
+hand_index_t PokerCardsIsomorphicHoleBoardIndex::GetIndex(
+    const PokerHand& hand, const PokerCards& board) const {
+  return GetIndex(hand.ToPokerCards(), board);
+}
+
+HoleBoardCards PokerCardsIsomorphicHoleBoardIndex::GetCards(
+    PokerRound round, hand_index_t index) const {
   std::vector<PokerCard> raw = UnindexRaw(round, index);
   const int board_cards = BoardCardsForRound(round);
   if (static_cast<int>(raw.size()) != board_cards + 2) {
     throw std::runtime_error("Unindexed cards do not match poker round");
   }
 
-  std::vector<PokerCard> board(raw.begin(),
-                               raw.begin() + board_cards);
+  std::vector<PokerCard> board(raw.begin(), raw.begin() + board_cards);
   std::vector<PokerCard> hole(raw.begin() + board_cards, raw.end());
   return HoleBoardCards{PokerCards(hole), PokerCards(board)};
 }
 
-hand_index_t PokerCardsIsomorphicHoleBoardIndex::RoundSize(PokerRound round) const {
+hand_index_t PokerCardsIsomorphicHoleBoardIndex::RoundSize(
+    PokerRound round) const {
   return hand_indexer_size(&indexers_[RoundIndex(round)],
                            HoleBoardIndexerRound(round));
 }

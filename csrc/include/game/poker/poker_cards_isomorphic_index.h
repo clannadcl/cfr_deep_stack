@@ -13,6 +13,7 @@ extern "C" {
 
 #include "game/poker/poker_card.h"
 #include "game/poker/poker_cards.h"
+#include "game/poker/poker_hand.h"
 
 namespace fisher::game::poker {
 
@@ -66,6 +67,7 @@ class PokerCardsIsomorphicHoleBoardIndex {
 
   hand_index_t GetIndex(const PokerCards& hole_cards,
                         const PokerCards& board) const;
+  hand_index_t GetIndex(const PokerHand& hand, const PokerCards& board) const;
   HoleBoardCards GetCards(PokerRound round, hand_index_t index) const;
   hand_index_t RoundSize(PokerRound round) const;
 

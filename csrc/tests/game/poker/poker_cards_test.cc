@@ -45,7 +45,8 @@ int main() {
   Expect(from_ids.ToString() == "As2cTh", "uint8 constructor should preserve order");
 
   PokerCards from_cards(std::vector<PokerCard>{PokerCard("As"), PokerCard("2c")});
-  Expect(from_cards.ToString() == "As2c", "PokerCard constructor should preserve order");
+  Expect(from_cards.ToString() == "As2c",
+         "PokerCard constructor should preserve order");
 
   PokerCards board("2c3d4h");
   PokerCards hand("AcKd");
