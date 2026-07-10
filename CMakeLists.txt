@@ -15,6 +15,8 @@ add_library(fisher_core STATIC
   third_party/hand-isomorphism/src/hand_index.c
   csrc/src/algorithm/cfr.cc
   csrc/src/game/kuhn.cc
+  csrc/src/game/poker/abstracted_action.cc
+  csrc/src/game/poker/action.cc
   csrc/src/game/poker/belief.cc
   csrc/src/game/poker/game_basic.cc
   csrc/src/game/poker/poker_cards_isomorphic_index.cc
@@ -47,6 +49,28 @@ if(FISHER_BUILD_TESTS)
   )
 
   add_test(NAME kuhn_cfr_test COMMAND kuhn_cfr_test)
+
+  add_executable(action_test
+    csrc/tests/game/poker/action_test.cc
+  )
+
+  target_link_libraries(action_test
+    PRIVATE
+      fisher_core
+  )
+
+  add_test(NAME action_test COMMAND action_test)
+
+  add_executable(abstracted_action_test
+    csrc/tests/game/poker/abstracted_action_test.cc
+  )
+
+  target_link_libraries(abstracted_action_test
+    PRIVATE
+      fisher_core
+  )
+
+  add_test(NAME abstracted_action_test COMMAND abstracted_action_test)
 
   add_executable(poker_card_test
     csrc/tests/game/poker/poker_card_test.cc
