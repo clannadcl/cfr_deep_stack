@@ -37,20 +37,20 @@ int main() {
   PokerCards cards("AcKdTh");
   Expect(!cards.Empty(), "cards should not be empty");
   Expect(cards.Size() == 3, "cards size mismatch");
-  Expect(cards.ToString() == "ThKdAc", "cards should be sorted by card index");
+  Expect(cards.ToString() == "AcKdTh", "cards should preserve input order");
   Expect(cards.Contains(PokerCard("Ac")), "cards should contain Ac");
   Expect(!cards.Contains(PokerCard("2c")), "cards should not contain 2c");
 
   PokerCards from_ids(std::vector<uint8_t>{51, 0, 34});
-  Expect(from_ids.ToString() == "2cThAs", "uint8 constructor should sort");
+  Expect(from_ids.ToString() == "As2cTh", "uint8 constructor should preserve order");
 
   PokerCards from_cards(std::vector<PokerCard>{PokerCard("As"), PokerCard("2c")});
-  Expect(from_cards.ToString() == "2cAs", "PokerCard constructor should sort");
+  Expect(from_cards.ToString() == "As2c", "PokerCard constructor should preserve order");
 
   PokerCards board("2c3d4h");
   PokerCards hand("AcKd");
   PokerCards merged = board.Merge(hand);
-  Expect(merged.ToString() == "2c3d4hKdAc", "merge output mismatch");
+  Expect(merged.ToString() == "2c3d4hAcKd", "merge output mismatch");
   Expect(board.HasCollision(PokerCards("2cAs")), "collision should be detected");
   Expect(!board.HasCollision(hand), "non-overlap should not collide");
 

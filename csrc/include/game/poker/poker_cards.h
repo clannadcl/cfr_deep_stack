@@ -31,7 +31,7 @@ class PokerCards {
   std::vector<PokerCards> Combinations(int k) const;
 
  private:
-  void SortAndValidateUnique();
+  void ValidateUnique() const;
   void AppendCombinations(int start, int remaining,
                           std::vector<PokerCard>* current,
                           std::vector<PokerCards>* output) const;

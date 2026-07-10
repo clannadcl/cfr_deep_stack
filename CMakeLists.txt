@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.20)
 
-project(fisher LANGUAGES CXX)
+project(fisher LANGUAGES C CXX)
 
 option(FISHER_BUILD_PYBIND "Build the Python pybind11 extension" ON)
 option(FISHER_BUILD_TESTS "Build C++ unit tests" ON)
@@ -11,8 +11,11 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
 add_library(fisher_core STATIC
+  third_party/hand-isomorphism/src/deck.c
+  third_party/hand-isomorphism/src/hand_index.c
   csrc/src/algorithm/cfr.cc
   csrc/src/game/kuhn.cc
+  csrc/src/game/poker/poker_cards_isomorphic_index.cc
   csrc/src/game/poker/poker_card.cc
   csrc/src/game/poker/poker_cards.cc
 )
@@ -20,6 +23,7 @@ add_library(fisher_core STATIC
 target_include_directories(fisher_core
   PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/csrc/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/hand-isomorphism/src
 )
 
 target_compile_options(fisher_core
@@ -62,6 +66,18 @@ if(FISHER_BUILD_TESTS)
   )
 
   add_test(NAME poker_cards_test COMMAND poker_cards_test)
+
+  add_executable(poker_cards_isomorphic_index_test
+    csrc/tests/game/poker/poker_cards_isomorphic_index_test.cc
+  )
+
+  target_link_libraries(poker_cards_isomorphic_index_test
+    PRIVATE
+      fisher_core
+  )
+
+  add_test(NAME poker_cards_isomorphic_index_test
+           COMMAND poker_cards_isomorphic_index_test)
 endif()
 
 if(FISHER_BUILD_PYBIND)

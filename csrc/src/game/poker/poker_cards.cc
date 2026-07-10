@@ -1,16 +1,8 @@
 #include "game/poker/poker_cards.h"
 
-#include <algorithm>
 #include <stdexcept>
 
 namespace fisher::game::poker {
-namespace {
-
-bool CardLess(PokerCard lhs, PokerCard rhs) {
-  return lhs.Value() < rhs.Value();
-}
-
-}  // namespace
 
 PokerCards::PokerCards(const std::string& cards) {
   if (cards.size() % 2 != 0) {
@@ -21,11 +13,11 @@ PokerCards::PokerCards(const std::string& cards) {
   for (std::size_t index = 0; index < cards.size(); index += 2) {
     cards_.emplace_back(cards.substr(index, 2));
   }
-  SortAndValidateUnique();
+  ValidateUnique();
 }
 
 PokerCards::PokerCards(const std::vector<PokerCard>& cards) : cards_(cards) {
-  SortAndValidateUnique();
+  ValidateUnique();
 }
 
 PokerCards::PokerCards(const std::vector<uint8_t>& cards) {
@@ -33,7 +25,7 @@ PokerCards::PokerCards(const std::vector<uint8_t>& cards) {
   for (uint8_t card : cards) {
     cards_.emplace_back(card);
   }
-  SortAndValidateUnique();
+  ValidateUnique();
 }
 
 PokerCards PokerCards::GenerateDeck() {
@@ -52,18 +44,16 @@ std::size_t PokerCards::Size() const { return cards_.size(); }
 bool PokerCards::Empty() const { return cards_.empty(); }
 
 bool PokerCards::Contains(PokerCard card) const {
-  return std::binary_search(cards_.begin(), cards_.end(), card, CardLess);
+  for (PokerCard current : cards_) {
+    if (current.Value() == card.Value()) return true;
+  }
+  return false;
 }
 
 bool PokerCards::HasCollision(const PokerCards& other) const {
-  auto lhs = cards_.begin();
-  auto rhs = other.cards_.begin();
-  while (lhs != cards_.end() && rhs != other.cards_.end()) {
-    if (lhs->Value() == rhs->Value()) return true;
-    if (lhs->Value() < rhs->Value()) {
-      ++lhs;
-    } else {
-      ++rhs;
+  for (PokerCard card : cards_) {
+    if (other.Contains(card)) {
+      return true;
     }
   }
   return false;
@@ -83,7 +73,6 @@ void PokerCards::Add(PokerCard card) {
     throw std::invalid_argument("Cannot add duplicate poker card");
   }
   cards_.push_back(card);
-  std::sort(cards_.begin(), cards_.end(), CardLess);
 }
 
 PokerCards PokerCards::Merge(const PokerCards& other) const {
@@ -119,11 +108,12 @@ std::vector<PokerCards> PokerCards::Combinations(int k) const {
   return output;
 }
 
-void PokerCards::SortAndValidateUnique() {
-  std::sort(cards_.begin(), cards_.end(), CardLess);
-  for (std::size_t index = 1; index < cards_.size(); ++index) {
-    if (cards_[index - 1].Value() == cards_[index].Value()) {
-      throw std::invalid_argument("PokerCards cannot contain duplicate cards");
+void PokerCards::ValidateUnique() const {
+  for (std::size_t left = 0; left < cards_.size(); ++left) {
+    for (std::size_t right = left + 1; right < cards_.size(); ++right) {
+      if (cards_[left].Value() == cards_[right].Value()) {
+        throw std::invalid_argument("PokerCards cannot contain duplicate cards");
+      }
     }
   }
 }
