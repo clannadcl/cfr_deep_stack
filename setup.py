@@ -51,6 +51,7 @@ ext_modules = [
             "csrc/src/binding/pybind.cc",
             "csrc/src/algorithm/cfr.cc",
             "csrc/src/game/kuhn.cc",
+            "csrc/src/game/poker/belief.cc",
             "csrc/src/game/poker/game_basic.cc",
             "csrc/src/game/poker/poker_cards_isomorphic_index.cc",
             "csrc/src/game/poker/poker_card.cc",
