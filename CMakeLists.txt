@@ -23,6 +23,7 @@ add_library(fisher_core STATIC
   csrc/src/game/poker/poker_card.cc
   csrc/src/game/poker/poker_cards.cc
   csrc/src/game/poker/poker_hand.cc
+  csrc/src/game/poker/tree_abstracted_bets.cc
 )
 
 target_include_directories(fisher_core
@@ -138,6 +139,18 @@ if(FISHER_BUILD_TESTS)
   )
 
   add_test(NAME game_basic_test COMMAND game_basic_test)
+
+  add_executable(tree_abstracted_bets_test
+    csrc/tests/game/poker/tree_abstracted_bets_test.cc
+  )
+
+  target_link_libraries(tree_abstracted_bets_test
+    PRIVATE
+      fisher_core
+  )
+
+  add_test(NAME tree_abstracted_bets_test
+           COMMAND tree_abstracted_bets_test)
 endif()
 
 if(FISHER_BUILD_PYBIND)
