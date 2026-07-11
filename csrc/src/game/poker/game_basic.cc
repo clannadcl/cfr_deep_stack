@@ -31,6 +31,23 @@ GameBasic::GameBasic(RakeConfig rake_config) : rake_config_(rake_config) {
   }
 }
 
+GameBasic::GameBasic(const GameBasic& other)
+    : deck_(other.deck_),
+      all_hands_(other.all_hands_),
+      flat_hand_index_by_card_pair_(other.flat_hand_index_by_card_pair_),
+      rake_config_(other.rake_config_) {}
+
+GameBasic& GameBasic::operator=(const GameBasic& other) {
+  if (this == &other) {
+    return *this;
+  }
+  deck_ = other.deck_;
+  all_hands_ = other.all_hands_;
+  flat_hand_index_by_card_pair_ = other.flat_hand_index_by_card_pair_;
+  rake_config_ = other.rake_config_;
+  return *this;
+}
+
 int GameBasic::NumPlayers() const { return kNumPlayers; }
 
 int GameBasic::NumHoleCards() const { return kNumHoleCards; }

@@ -59,6 +59,7 @@ ext_modules = [
             "csrc/src/game/poker/poker_card.cc",
             "csrc/src/game/poker/poker_cards.cc",
             "csrc/src/game/poker/poker_hand.cc",
+            "csrc/src/game/poker/subgame_setup.cc",
             "csrc/src/game/poker/tree_abstracted_bets.cc",
             "third_party/hand-isomorphism/src/deck.c",
             "third_party/hand-isomorphism/src/hand_index.c",

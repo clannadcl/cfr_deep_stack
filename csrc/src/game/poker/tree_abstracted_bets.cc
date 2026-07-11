@@ -53,6 +53,36 @@ bool IsSupportedBetAction(const AbstractedAction& action) {
 
 }  // namespace
 
+TreeAbstractedBets::TreeAbstractedBets(const Args& args)
+    : TreeAbstractedBets(args.default_bets, args.default_donk_bets) {
+  if (args.preflop_bets.has_value()) {
+    SetStreetBets(PokerRound::kPreflop, args.preflop_bets.value());
+  }
+  if (args.flop_bets.has_value()) {
+    SetStreetBets(PokerRound::kFlop, args.flop_bets.value());
+  }
+  if (args.turn_bets.has_value()) {
+    SetStreetBets(PokerRound::kTurn, args.turn_bets.value());
+  }
+  if (args.river_bets.has_value()) {
+    SetStreetBets(PokerRound::kRiver, args.river_bets.value());
+  }
+  if (args.preflop_donk_bets.has_value()) {
+    SetDonkBets(PokerRound::kPreflop, args.preflop_donk_bets.value());
+  }
+  if (args.flop_donk_bets.has_value()) {
+    SetDonkBets(PokerRound::kFlop, args.flop_donk_bets.value());
+  }
+  if (args.turn_donk_bets.has_value()) {
+    SetDonkBets(PokerRound::kTurn, args.turn_donk_bets.value());
+  }
+  if (args.river_donk_bets.has_value()) {
+    SetDonkBets(PokerRound::kRiver, args.river_donk_bets.value());
+  }
+  SetBetToAllInThreshold(args.bet_to_allin_threshold);
+  SetAddAllInThreshold(args.add_allin_threshold);
+}
+
 TreeAbstractedBets::TreeAbstractedBets(
     const AbstractedBetConfig& default_bets)
     : TreeAbstractedBets(default_bets, DefaultDonkBets(default_bets)) {}
@@ -126,6 +156,14 @@ const AbstractedDonkBetConfig& TreeAbstractedBets::GetDonkBets(
   throw std::invalid_argument("Invalid poker round");
 }
 
+float TreeAbstractedBets::BetToAllInThreshold() const {
+  return bet_to_allin_threshold_;
+}
+
+float TreeAbstractedBets::AddAllInThreshold() const {
+  return add_allin_threshold_;
+}
+
 void TreeAbstractedBets::SetStreetBets(PokerRound round,
                                        const AbstractedBetConfig& bets) {
   ValidateConfig(bets);
@@ -174,6 +212,20 @@ void TreeAbstractedBets::SetDonkBets(
 void TreeAbstractedBets::SetDonkBets(
     PokerRound round, const AbstractedDonkBetStringConfig& bets) {
   SetDonkBets(round, ParseStringDonkConfig(bets));
+}
+
+void TreeAbstractedBets::SetBetToAllInThreshold(float threshold) {
+  if (threshold < 0.0f) {
+    throw std::invalid_argument("Bet-to-allin threshold cannot be negative");
+  }
+  bet_to_allin_threshold_ = threshold;
+}
+
+void TreeAbstractedBets::SetAddAllInThreshold(float threshold) {
+  if (threshold < 0.0f) {
+    throw std::invalid_argument("Add-allin threshold cannot be negative");
+  }
+  add_allin_threshold_ = threshold;
 }
 
 AbstractedBetConfig TreeAbstractedBets::ParseStringConfig(

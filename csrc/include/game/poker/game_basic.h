@@ -28,6 +28,8 @@ class GameBasic {
   static constexpr int kNumHands = 1326;
 
   explicit GameBasic(RakeConfig rake_config = RakeConfig{});
+  GameBasic(const GameBasic& other);
+  GameBasic& operator=(const GameBasic& other);
 
   int NumPlayers() const;
   int NumHoleCards() const;

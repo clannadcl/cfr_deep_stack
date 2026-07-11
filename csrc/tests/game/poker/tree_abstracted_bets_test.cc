@@ -29,6 +29,7 @@ int main() {
   using fisher::game::poker::AbstractedAction;
   using fisher::game::poker::AbstractedBetConfig;
   using fisher::game::poker::AbstractedBetStringConfig;
+  using fisher::game::poker::AbstractedDonkBetConfig;
   using fisher::game::poker::AbstractedDonkBetStringConfig;
   using fisher::game::poker::PokerRound;
   using fisher::game::poker::TreeAbstractedBets;
@@ -56,6 +57,16 @@ int main() {
   Expect(default_bets.GetDonkBets(PokerRound::kTurn)[0].ToString() ==
              "percent:33",
          "default donk should use first raise config");
+  Expect(default_bets.BetToAllInThreshold() == 75.0f,
+         "default bet-to-allin threshold mismatch");
+  Expect(default_bets.AddAllInThreshold() == 250.0f,
+         "default add-allin threshold mismatch");
+  default_bets.SetBetToAllInThreshold(0.75f);
+  default_bets.SetAddAllInThreshold(0.25f);
+  Expect(default_bets.BetToAllInThreshold() == 0.75f,
+         "bet-to-allin threshold mismatch");
+  Expect(default_bets.AddAllInThreshold() == 0.25f,
+         "add-allin threshold mismatch");
 
   TreeAbstractedBets street_bets(AbstractedBetStringConfig{{"33%"}});
   street_bets.SetStreetBets(PokerRound::kPreflop,
@@ -90,6 +101,25 @@ int main() {
   Expect(default_donk_bets.GetDonkBets(PokerRound::kRiver)[0].ToString() ==
              "bb:2.5",
          "default explicit donk mismatch");
+
+  TreeAbstractedBets::Args args;
+  args.flop_bets = AbstractedBetConfig{{AbstractedAction::BetPercent(80.0f)}};
+  args.turn_donk_bets = AbstractedDonkBetConfig{AbstractedAction::AllIn()};
+  args.bet_to_allin_threshold = 60.0f;
+  args.add_allin_threshold = 180.0f;
+  TreeAbstractedBets args_bets(args);
+  Expect(args_bets.GetBets(PokerRound::kPreflop, 0)[0].ToString() ==
+             "percent:33",
+         "args default preflop mismatch");
+  Expect(args_bets.GetBets(PokerRound::kFlop, 0)[0].ToString() ==
+             "percent:80",
+         "args flop override mismatch");
+  Expect(args_bets.GetDonkBets(PokerRound::kTurn)[0].ToString() == "allin",
+         "args turn donk override mismatch");
+  Expect(args_bets.BetToAllInThreshold() == 60.0f,
+         "args bet-to-allin threshold mismatch");
+  Expect(args_bets.AddAllInThreshold() == 180.0f,
+         "args add-allin threshold mismatch");
 
   ExpectInvalidArgument(
       [] { TreeAbstractedBets invalid(AbstractedBetStringConfig{}); },
@@ -131,6 +161,12 @@ int main() {
                                  AbstractedDonkBetStringConfig{"check"});
       },
       "check donk should be invalid");
+  ExpectInvalidArgument(
+      [&] { default_bets.SetBetToAllInThreshold(-0.1f); },
+      "negative bet-to-allin threshold should be invalid");
+  ExpectInvalidArgument(
+      [&] { default_bets.SetAddAllInThreshold(-0.1f); },
+      "negative add-allin threshold should be invalid");
 
   return 0;
 }
