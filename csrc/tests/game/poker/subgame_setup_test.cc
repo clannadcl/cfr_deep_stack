@@ -45,11 +45,12 @@ fisher::game::poker::SubgameSetup::Args MakeArgs(
 
   return SubgameSetup::Args(
       PokerCards("AsKdQh"), 12.5f, std::array<float, 2>{90.0f, 88.0f},
+      std::array<float, 2>{2.0f, 4.0f},
       std::array<float, 2>{2.0f, 4.0f}, /*current_player=*/1,
       /*last_aggressor=*/0, /*raise_count=*/1,
       std::vector<Action>{Action::Check(), Action::Bet(4.0f)},
       std::move(root_belief), TreeAbstractedBets(TreeAbstractedBets::Args{}),
-      GameBasic(), /*bet_rounding=*/0.1f);
+      GameBasic(), /*bet_rounding=*/0.1f, /*min_raise_size=*/1.0f);
 }
 
 }  // namespace
@@ -76,6 +77,8 @@ int main() {
   Expect(setup.Pot() == 12.5f, "pot mismatch");
   Expect(setup.Stacks()[0] == 90.0f, "player 0 stack mismatch");
   Expect(setup.Stacks()[1] == 88.0f, "player 1 stack mismatch");
+  Expect(setup.BetTotal()[0] == 2.0f, "player 0 total bet mismatch");
+  Expect(setup.BetTotal()[1] == 4.0f, "player 1 total bet mismatch");
   Expect(setup.BetCurrentRound()[0] == 2.0f, "player 0 bet mismatch");
   Expect(setup.BetCurrentRound()[1] == 4.0f, "player 1 bet mismatch");
   Expect(setup.CurrentPlayer() == 1, "current player mismatch");
@@ -83,6 +86,7 @@ int main() {
   Expect(setup.RaiseCount() == 1, "raise count mismatch");
   Expect(setup.RootActionHistory().size() == 2, "action history mismatch");
   Expect(setup.BetRounding() == 0.1f, "bet rounding mismatch");
+  Expect(setup.MinRaiseSize() == 1.0f, "min raise size mismatch");
   Expect(setup.RootBelief().Belief()[0][blocked_hand] == 0.0f,
          "blocked hand should be zeroed for player 0");
   Expect(setup.RootBelief().Belief()[1][blocked_hand] == 0.0f,
@@ -95,16 +99,18 @@ int main() {
 
   SubgameSetup turn_setup(SubgameSetup::Args(
       PokerCards("AsKdQh2c"), 10.0f, std::array<float, 2>{50.0f, 50.0f},
+      std::array<float, 2>{0.0f, 0.0f},
       std::array<float, 2>{0.0f, 0.0f}, 0, -1, 0, {},
       MatrixBelief(1.0f), TreeAbstractedBets(TreeAbstractedBets::Args{}),
-      GameBasic(), 0.1f));
+      GameBasic(), 0.1f, 1.0f));
   Expect(turn_setup.Street() == PokerRound::kTurn, "turn street mismatch");
 
   SubgameSetup river_setup(SubgameSetup::Args(
       PokerCards("AsKdQh2c3d"), 10.0f, std::array<float, 2>{50.0f, 50.0f},
+      std::array<float, 2>{0.0f, 0.0f},
       std::array<float, 2>{0.0f, 0.0f}, 0, -1, 0, {},
       MatrixBelief(1.0f), TreeAbstractedBets(TreeAbstractedBets::Args{}),
-      GameBasic(), 0.1f));
+      GameBasic(), 0.1f, 1.0f));
   Expect(river_setup.Street() == PokerRound::kRiver, "river street mismatch");
 
   SubgameSetup range_setup(MakeArgs(
@@ -174,6 +180,20 @@ int main() {
   ExpectInvalidArgument(
       [] {
         auto args = MakeArgs(MatrixBelief(1.0f));
+        args.bet_total[1] = -1.0f;
+        SubgameSetup invalid(args);
+      },
+      "negative total bet should be invalid");
+  ExpectInvalidArgument(
+      [] {
+        auto args = MakeArgs(MatrixBelief(1.0f));
+        args.bet_total[1] = 3.0f;
+        SubgameSetup invalid(args);
+      },
+      "total bet below current-round bet should be invalid");
+  ExpectInvalidArgument(
+      [] {
+        auto args = MakeArgs(MatrixBelief(1.0f));
         args.current_player = 2;
         SubgameSetup invalid(args);
       },
@@ -214,6 +234,13 @@ int main() {
         SubgameSetup invalid(args);
       },
       "non-positive bet rounding should be invalid");
+  ExpectInvalidArgument(
+      [] {
+        auto args = MakeArgs(MatrixBelief(1.0f));
+        args.min_raise_size = 0.0f;
+        SubgameSetup invalid(args);
+      },
+      "non-positive min raise size should be invalid");
 
   return 0;
 }

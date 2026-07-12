@@ -3,6 +3,8 @@
 #include <stdexcept>
 #include <utility>
 
+#include "game/poker/node_state.h"
+
 namespace fisher::game::poker {
 namespace {
 
@@ -28,16 +30,19 @@ void ValidateRootBeliefShape(
 
 SubgameSetup::Args::Args(PokerCards board, float pot,
                          std::array<float, 2> stacks,
+                         std::array<float, 2> bet_total,
                          std::array<float, 2> bet_current_round,
                          int current_player, int last_aggressor,
                          int raise_count,
                          std::vector<Action> root_action_history,
                          RootBeliefInput root_belief,
                          TreeAbstractedBets abstracted_bets,
-                         GameBasic game_basic, float bet_rounding)
+                         GameBasic game_basic, float bet_rounding,
+                         float min_raise_size)
     : board(std::move(board)),
       pot(pot),
       stacks(stacks),
+      bet_total(bet_total),
       bet_current_round(bet_current_round),
       current_player(current_player),
       last_aggressor(last_aggressor),
@@ -46,7 +51,8 @@ SubgameSetup::Args::Args(PokerCards board, float pot,
       root_belief(std::move(root_belief)),
       abstracted_bets(std::move(abstracted_bets)),
       game_basic(std::move(game_basic)),
-      bet_rounding(bet_rounding) {}
+      bet_rounding(bet_rounding),
+      min_raise_size(min_raise_size) {}
 
 SubgameSetup::SubgameSetup(const Args& args)
     : board_(args.board),
@@ -54,6 +60,7 @@ SubgameSetup::SubgameSetup(const Args& args)
       street_(game_basic_.BoardRound(board_)),
       pot_(args.pot),
       stacks_(args.stacks),
+      bet_total_(args.bet_total),
       bet_current_round_(args.bet_current_round),
       current_player_(args.current_player),
       last_aggressor_(args.last_aggressor),
@@ -61,6 +68,7 @@ SubgameSetup::SubgameSetup(const Args& args)
       root_action_history_(args.root_action_history),
       abstracted_bets_(args.abstracted_bets),
       bet_rounding_(args.bet_rounding),
+      min_raise_size_(args.min_raise_size),
       root_belief_(BuildRootBelief(args.root_belief, board_, game_basic_)) {
   if (pot_ < 0.0f) {
     throw std::invalid_argument("Pot cannot be negative");
@@ -75,6 +83,16 @@ SubgameSetup::SubgameSetup(const Args& args)
       throw std::invalid_argument("Current-round bet cannot be negative");
     }
   }
+  for (int player = 0; player < GameBasic::kNumPlayers; ++player) {
+    const std::size_t index = static_cast<std::size_t>(player);
+    if (bet_total_[index] < 0.0f) {
+      throw std::invalid_argument("Total bet cannot be negative");
+    }
+    if (bet_total_[index] < bet_current_round_[index]) {
+      throw std::invalid_argument(
+          "Total bet cannot be smaller than current-round bet");
+    }
+  }
   ValidatePlayerIndex(current_player_, "Current player must be 0 or 1");
   if (last_aggressor_ != -1) {
     ValidatePlayerIndex(last_aggressor_, "Last aggressor must be -1, 0, or 1");
@@ -85,6 +103,9 @@ SubgameSetup::SubgameSetup(const Args& args)
   if (bet_rounding_ <= 0.0f) {
     throw std::invalid_argument("Bet rounding must be positive");
   }
+  if (min_raise_size_ <= 0.0f) {
+    throw std::invalid_argument("Min raise size must be positive");
+  }
 }
 
 const PokerCards& SubgameSetup::Board() const { return board_; }
@@ -94,6 +115,10 @@ PokerRound SubgameSetup::Street() const { return street_; }
 float SubgameSetup::Pot() const { return pot_; }
 
 const std::array<float, 2>& SubgameSetup::Stacks() const { return stacks_; }
+
+const std::array<float, 2>& SubgameSetup::BetTotal() const {
+  return bet_total_;
+}
 
 const std::array<float, 2>& SubgameSetup::BetCurrentRound() const {
   return bet_current_round_;
@@ -118,6 +143,16 @@ const TreeAbstractedBets& SubgameSetup::AbstractedBets() const {
 const GameBasic& SubgameSetup::BasicGame() const { return game_basic_; }
 
 float SubgameSetup::BetRounding() const { return bet_rounding_; }
+
+float SubgameSetup::MinRaiseSize() const { return min_raise_size_; }
+
+NodeState SubgameSetup::GetRootNodeState() const {
+  return NodeState(NodeState::Args(
+      shared_from_this(), board_, pot_, stacks_, bet_total_,
+      bet_current_round_, current_player_, last_aggressor_, raise_count_,
+      std::array<bool, 2>{false, false}, TerminalStatus::kNotTerminal,
+      root_action_history_));
+}
 
 PokerBelief SubgameSetup::BuildRootBelief(const RootBeliefInput& input,
                                           const PokerCards& board,

@@ -46,9 +46,9 @@ AbstractedAction ParseAbstractedBet(const std::string& text) {
 }
 
 bool IsSupportedBetAction(const AbstractedAction& action) {
-  const std::string& value = action.Value();
-  return value == "allin" || value.rfind("percent:", 0) == 0 ||
-         value.rfind("bb:", 0) == 0;
+  return action.Type() == AbstractedActionType::kAllIn ||
+         action.Type() == AbstractedActionType::kBetPercent ||
+         action.Type() == AbstractedActionType::kBetBigBlind;
 }
 
 }  // namespace

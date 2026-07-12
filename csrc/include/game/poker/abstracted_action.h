@@ -4,6 +4,15 @@
 
 namespace fisher::game::poker {
 
+enum class AbstractedActionType {
+  kFold = 0,
+  kCheck = 1,
+  kCall = 2,
+  kBetPercent = 3,
+  kBetBigBlind = 4,
+  kAllIn = 5,
+};
+
 class AbstractedAction {
  public:
   static AbstractedAction Fold();
@@ -13,6 +22,8 @@ class AbstractedAction {
   static AbstractedAction BetBigBlind(float big_blind);
   static AbstractedAction AllIn();
 
+  AbstractedActionType Type() const;
+  float Amount() const;
   const std::string& Value() const;
   std::string ToString() const;
 
@@ -21,8 +32,11 @@ class AbstractedAction {
   bool operator<(const AbstractedAction& other) const;
 
  private:
-  explicit AbstractedAction(std::string value);
+  AbstractedAction(AbstractedActionType type, float amount,
+                   std::string value);
 
+  AbstractedActionType type_;
+  float amount_;
   std::string value_;
 };
 

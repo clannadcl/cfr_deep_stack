@@ -26,6 +26,7 @@ void ExpectInvalidArgument(Fn fn, const char* message) {
 
 int main() {
   using fisher::game::poker::AbstractedAction;
+  using fisher::game::poker::AbstractedActionType;
 
   const AbstractedAction fold = AbstractedAction::Fold();
   Expect(fold.ToString() == "fold", "fold string mismatch");
@@ -39,12 +40,20 @@ int main() {
 
   const AbstractedAction percent = AbstractedAction::BetPercent(33.0f);
   Expect(percent.ToString() == "percent:33", "percent bet string mismatch");
+  Expect(percent.Type() == AbstractedActionType::kBetPercent,
+         "percent bet type mismatch");
+  Expect(percent.Amount() == 33.0f, "percent bet amount mismatch");
 
   const AbstractedAction big_blind = AbstractedAction::BetBigBlind(35.5f);
   Expect(big_blind.ToString() == "bb:35.5", "bb bet string mismatch");
+  Expect(big_blind.Type() == AbstractedActionType::kBetBigBlind,
+         "bb bet type mismatch");
+  Expect(big_blind.Amount() == 35.5f, "bb bet amount mismatch");
 
   const AbstractedAction allin = AbstractedAction::AllIn();
   Expect(allin.ToString() == "allin", "allin string mismatch");
+  Expect(allin.Type() == AbstractedActionType::kAllIn,
+         "allin type mismatch");
 
   Expect(AbstractedAction::BetPercent(33.0f) ==
              AbstractedAction::BetPercent(33.0f),

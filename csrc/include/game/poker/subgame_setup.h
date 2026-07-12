@@ -1,6 +1,7 @@
 #pragma once
 
 #include <array>
+#include <memory>
 #include <variant>
 #include <vector>
 
@@ -13,7 +14,9 @@
 
 namespace fisher::game::poker {
 
-class SubgameSetup {
+class NodeState;
+
+class SubgameSetup : public std::enable_shared_from_this<SubgameSetup> {
  public:
   using RootBeliefInput =
       std::variant<std::vector<std::vector<float>>, std::vector<std::string>>;
@@ -21,15 +24,17 @@ class SubgameSetup {
   struct Args {
     Args() = delete;
     Args(PokerCards board, float pot, std::array<float, 2> stacks,
+         std::array<float, 2> bet_total,
          std::array<float, 2> bet_current_round, int current_player,
          int last_aggressor, int raise_count,
          std::vector<Action> root_action_history,
          RootBeliefInput root_belief, TreeAbstractedBets abstracted_bets,
-         GameBasic game_basic, float bet_rounding);
+         GameBasic game_basic, float bet_rounding, float min_raise_size);
 
     PokerCards board;
     float pot;
     std::array<float, 2> stacks;
+    std::array<float, 2> bet_total;
     std::array<float, 2> bet_current_round;
     int current_player;
     int last_aggressor;
@@ -39,6 +44,7 @@ class SubgameSetup {
     TreeAbstractedBets abstracted_bets;
     GameBasic game_basic;
     float bet_rounding;
+    float min_raise_size;
   };
 
   explicit SubgameSetup(const Args& args);
@@ -47,6 +53,7 @@ class SubgameSetup {
   PokerRound Street() const;
   float Pot() const;
   const std::array<float, 2>& Stacks() const;
+  const std::array<float, 2>& BetTotal() const;
   const std::array<float, 2>& BetCurrentRound() const;
   int CurrentPlayer() const;
   int LastAggressor() const;
@@ -56,6 +63,8 @@ class SubgameSetup {
   const TreeAbstractedBets& AbstractedBets() const;
   const GameBasic& BasicGame() const;
   float BetRounding() const;
+  float MinRaiseSize() const;
+  NodeState GetRootNodeState() const;
 
  private:
   static PokerBelief BuildRootBelief(const RootBeliefInput& input,
@@ -67,6 +76,7 @@ class SubgameSetup {
   PokerRound street_;
   float pot_;
   std::array<float, 2> stacks_;
+  std::array<float, 2> bet_total_;
   std::array<float, 2> bet_current_round_;
   int current_player_;
   int last_aggressor_;
@@ -74,6 +84,7 @@ class SubgameSetup {
   std::vector<Action> root_action_history_;
   TreeAbstractedBets abstracted_bets_;
   float bet_rounding_;
+  float min_raise_size_;
   PokerBelief root_belief_;
 };
 

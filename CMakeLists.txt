@@ -16,9 +16,11 @@ add_library(fisher_core STATIC
   csrc/src/algorithm/cfr.cc
   csrc/src/game/kuhn.cc
   csrc/src/game/poker/abstracted_action.cc
+  csrc/src/game/poker/action_resolver.cc
   csrc/src/game/poker/action.cc
   csrc/src/game/poker/belief.cc
   csrc/src/game/poker/game_basic.cc
+  csrc/src/game/poker/node_state.cc
   csrc/src/game/poker/poker_cards_isomorphic_index.cc
   csrc/src/game/poker/poker_card.cc
   csrc/src/game/poker/poker_cards.cc
@@ -152,6 +154,17 @@ if(FISHER_BUILD_TESTS)
 
   add_test(NAME tree_abstracted_bets_test
            COMMAND tree_abstracted_bets_test)
+
+  add_executable(node_state_test
+    csrc/tests/game/poker/node_state_test.cc
+  )
+
+  target_link_libraries(node_state_test
+    PRIVATE
+      fisher_core
+  )
+
+  add_test(NAME node_state_test COMMAND node_state_test)
 
   add_executable(subgame_setup_test
     csrc/tests/game/poker/subgame_setup_test.cc
