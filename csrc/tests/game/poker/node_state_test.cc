@@ -176,6 +176,52 @@ int main() {
   Expect(HasAction(raise_node.ValidActions(), Action::Bet(7.5f)),
          "50 percent raise target mismatch");
 
+  auto x_raise_setup = MakeSetup(
+      PokerCards("AsKdQh"), 3.0f, {97.0f, 100.0f}, {3.0f, 0.0f},
+      {3.0f, 0.0f}, 1, 0, 1, MakeBets({{"33%"}, {"2.5x"}}));
+  Expect(HasAction(x_raise_setup->GetRootNodeState().ValidActions(),
+                   Action::Bet(7.5f)),
+         "2.5x raise target mismatch");
+
+  auto geometric_setup = MakeSetup(
+      PokerCards("AsKdQh"), 100.0f, {400.0f, 400.0f}, {0.0f, 0.0f},
+      {0.0f, 0.0f}, 1, -1, 0, MakeBets({{"2e"}}));
+  Expect(HasAction(geometric_setup->GetRootNodeState().ValidActions(),
+                   Action::Bet(100.0f)),
+         "2e open target mismatch");
+
+  auto geometric_allin_setup = MakeSetup(
+      PokerCards("AsKdQh"), 100.0f, {400.0f, 400.0f}, {0.0f, 0.0f},
+      {0.0f, 0.0f}, 1, -1, 0, MakeBets({{"1e", "allin"}}));
+  Expect(HasAction(geometric_allin_setup->GetRootNodeState().ValidActions(),
+                   Action::Bet(400.0f)),
+         "1e should resolve to allin target");
+
+  auto capped_geometric_setup = MakeSetup(
+      PokerCards("AsKdQh"), 100.0f, {1000.0f, 1000.0f}, {0.0f, 0.0f},
+      {0.0f, 0.0f}, 1, -1, 0, MakeBets({{"1e200%"}}));
+  Expect(HasAction(capped_geometric_setup->GetRootNodeState().ValidActions(),
+                   Action::Bet(200.0f)),
+         "capped geometric open target mismatch");
+
+  TreeAbstractedBets::Args merging_args;
+  merging_args.default_bets = {{fisher::game::poker::AbstractedAction::
+                                    BetPercent(50.0f),
+                                fisher::game::poker::AbstractedAction::
+                                    BetPercent(52.0f)}};
+  merging_args.default_donk_bets = {
+      fisher::game::poker::AbstractedAction::BetPercent(50.0f)};
+  merging_args.merging_threshold = 0.1f;
+  auto merging_setup = MakeSetup(
+      PokerCards("AsKdQh"), 100.0f, {1000.0f, 1000.0f}, {0.0f, 0.0f},
+      {0.0f, 0.0f}, 1, -1, 0, TreeAbstractedBets(merging_args));
+  Expect(!HasAction(merging_setup->GetRootNodeState().ValidActions(),
+                    Action::Bet(50.0f)),
+         "close smaller bet should be merged");
+  Expect(HasAction(merging_setup->GetRootNodeState().ValidActions(),
+                   Action::Bet(52.0f)),
+         "close larger bet should be kept");
+
   TreeAbstractedBets donk_bets(AbstractedBetStringConfig{{"10bb"}},
                                AbstractedDonkBetStringConfig{"2.5bb"});
   auto donk_setup = MakeSetup(

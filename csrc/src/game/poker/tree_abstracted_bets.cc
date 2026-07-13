@@ -31,8 +31,27 @@ float ParseFloat(const std::string& text) {
 }
 
 AbstractedAction ParseAbstractedBet(const std::string& text) {
-  if (text == "allin") {
+  if (text == "allin" || text == "a") {
     return AbstractedAction::AllIn();
+  }
+  if (text == "e") {
+    return AbstractedAction::BetGeometric(0.0f);
+  }
+  const std::size_t e_position = text.find('e');
+  if (e_position != std::string::npos) {
+    const std::string street_text = text.substr(0, e_position);
+    const float num_streets =
+        street_text.empty() ? 0.0f : ParseFloat(street_text);
+    const std::string cap_text = text.substr(e_position + 1);
+    if (cap_text.empty()) {
+      return AbstractedAction::BetGeometric(num_streets);
+    }
+    if (!EndsWith(cap_text, "%")) {
+      throw std::invalid_argument(
+          "Geometric abstracted bet cap must be a percentage");
+    }
+    return AbstractedAction::BetGeometric(
+        num_streets, ParseFloat(cap_text.substr(0, cap_text.size() - 1)));
   }
   if (EndsWith(text, "%")) {
     return AbstractedAction::BetPercent(
@@ -42,13 +61,19 @@ AbstractedAction ParseAbstractedBet(const std::string& text) {
     return AbstractedAction::BetBigBlind(
         ParseFloat(text.substr(0, text.size() - 2)));
   }
+  if (EndsWith(text, "x")) {
+    return AbstractedAction::BetPreviousBetMultiplier(
+        ParseFloat(text.substr(0, text.size() - 1)));
+  }
   throw std::invalid_argument("Unsupported abstracted bet string");
 }
 
 bool IsSupportedBetAction(const AbstractedAction& action) {
   return action.Type() == AbstractedActionType::kAllIn ||
          action.Type() == AbstractedActionType::kBetPercent ||
-         action.Type() == AbstractedActionType::kBetBigBlind;
+         action.Type() == AbstractedActionType::kBetBigBlind ||
+         action.Type() == AbstractedActionType::kBetPreviousBetMultiplier ||
+         action.Type() == AbstractedActionType::kBetGeometric;
 }
 
 }  // namespace
@@ -81,6 +106,7 @@ TreeAbstractedBets::TreeAbstractedBets(const Args& args)
   }
   SetBetToAllInThreshold(args.bet_to_allin_threshold);
   SetAddAllInThreshold(args.add_allin_threshold);
+  SetMergingThreshold(args.merging_threshold);
 }
 
 TreeAbstractedBets::TreeAbstractedBets(
@@ -164,6 +190,10 @@ float TreeAbstractedBets::AddAllInThreshold() const {
   return add_allin_threshold_;
 }
 
+float TreeAbstractedBets::MergingThreshold() const {
+  return merging_threshold_;
+}
+
 void TreeAbstractedBets::SetStreetBets(PokerRound round,
                                        const AbstractedBetConfig& bets) {
   ValidateConfig(bets);
@@ -226,6 +256,13 @@ void TreeAbstractedBets::SetAddAllInThreshold(float threshold) {
     throw std::invalid_argument("Add-allin threshold cannot be negative");
   }
   add_allin_threshold_ = threshold;
+}
+
+void TreeAbstractedBets::SetMergingThreshold(float threshold) {
+  if (threshold < 0.0f) {
+    throw std::invalid_argument("Merging threshold cannot be negative");
+  }
+  merging_threshold_ = threshold;
 }
 
 AbstractedBetConfig TreeAbstractedBets::ParseStringConfig(

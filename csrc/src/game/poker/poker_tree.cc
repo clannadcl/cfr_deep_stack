@@ -21,42 +21,11 @@ bool IsPrefix(const std::vector<Action>& prefix,
   return true;
 }
 
-bool EdgeMatchesPathStep(const PokerTreeEdge& edge,
-                         const PokerTreeEdge& path_step) {
-  if (edge.action != path_step.action ||
-      edge.chance_card.has_value() != path_step.chance_card.has_value()) {
-    return false;
-  }
-  if (!edge.chance_card.has_value()) {
-    return true;
-  }
-  return edge.chance_card->Value() == path_step.chance_card->Value();
-}
-
 }  // namespace
-
-PokerTreeEdge::PokerTreeEdge(Action action,
-                             std::optional<PokerCard> chance_card,
-                             int child_node_id)
-    : action(action),
-      chance_card(chance_card),
-      child_node_id(child_node_id) {}
-
-PokerTreeEdge PokerTreeEdge::PlayerAction(Action action, int child_node_id) {
-  if (action.IsChance()) {
-    throw std::invalid_argument(
-        "Player poker tree edge cannot use chance action");
-  }
-  return PokerTreeEdge(action, std::nullopt, child_node_id);
-}
-
-PokerTreeEdge PokerTreeEdge::Chance(PokerCard card, int child_node_id) {
-  return PokerTreeEdge(Action::Chance(), card, child_node_id);
-}
 
 PokerTreeNode::PokerTreeNode(int node_id,
                              std::shared_ptr<const NodeState> node_state,
-                             std::optional<int> parent_node_id)
+                             int parent_node_id)
     : node_id(node_id),
       node_state(std::move(node_state)),
       parent_node_id(parent_node_id) {}
@@ -83,6 +52,18 @@ const PokerTreeNode& PokerTree::Root() const { return Node(0); }
 
 int PokerTree::NumNodes() const { return static_cast<int>(nodes_.size()); }
 
+bool PokerTree::HasChildren(int node_id) const {
+  return Node(node_id).num_children > 0;
+}
+
+int PokerTree::ChildNodeIdAt(int node_id, int child_index) const {
+  const PokerTreeNode& node = Node(node_id);
+  if (child_index < 0 || child_index >= node.num_children) {
+    throw std::invalid_argument("Poker tree child index is out of range");
+  }
+  return node.children_offset + child_index;
+}
+
 std::optional<int> PokerTree::FindNode(
     const std::vector<Action>& action_history) const {
   const std::vector<Action>& root_history =
@@ -93,49 +74,69 @@ std::optional<int> PokerTree::FindNode(
   for (std::size_t action_index = start_index;
        action_index < action_history.size(); ++action_index) {
     const Action& action = action_history[action_index];
-    const PokerTreeNode& node = Node(current_node_id);
-    std::optional<int> matched_node_id;
-    for (const PokerTreeEdge& edge : node.child_edges) {
-      if (edge.action != action) {
-        continue;
-      }
-      if (matched_node_id.has_value()) {
-        return std::nullopt;
-      }
-      matched_node_id = edge.child_node_id;
-    }
-    if (!matched_node_id.has_value()) {
+    const std::optional<int> child_node_id =
+        FindChild(current_node_id, action);
+    if (!child_node_id.has_value()) {
       return std::nullopt;
     }
-    current_node_id = matched_node_id.value();
+    current_node_id = child_node_id.value();
   }
   return current_node_id;
 }
 
-std::optional<int> PokerTree::FindNode(
-    const std::vector<PokerTreeEdge>& path) const {
-  std::vector<Action> path_actions;
-  path_actions.reserve(path.size());
-  for (const PokerTreeEdge& edge : path) {
-    path_actions.push_back(edge.action);
+std::optional<int> PokerTree::FindChild(int node_id,
+                                        const Action& action) const {
+  const PokerTreeNode& node = Node(node_id);
+  if (!HasChildren(node_id) ||
+      node.node_state->ActorPlayer() == NodeState::kChancePlayer ||
+      action.IsChance()) {
+    return std::nullopt;
   }
 
-  const std::vector<Action>& root_history =
-      Root().node_state->ActionHistory();
-  const std::size_t start_index =
-      IsPrefix(root_history, path_actions) ? root_history.size() : 0;
-  std::vector<PokerTreeEdge> stripped_path;
-  stripped_path.reserve(path.size() - start_index);
-  for (std::size_t index = start_index; index < path.size(); ++index) {
-    stripped_path.push_back(path[index]);
+  const std::vector<Action>& valid_actions = node.node_state->ValidActions();
+  if (static_cast<int>(valid_actions.size()) != node.num_children) {
+    throw std::runtime_error(
+        "Player node valid action count does not match child count");
   }
-  return FindNodeFromStrippedPath(stripped_path);
+  for (std::size_t index = 0; index < valid_actions.size(); ++index) {
+    if (valid_actions[index] == action) {
+      return ChildNodeIdAt(node_id, static_cast<int>(index));
+    }
+  }
+  return std::nullopt;
+}
+
+std::optional<int> PokerTree::FindChanceChild(int node_id,
+                                              PokerCard card) const {
+  const PokerTreeNode& node = Node(node_id);
+  if (!HasChildren(node_id) ||
+      node.node_state->ActorPlayer() != NodeState::kChancePlayer) {
+    return std::nullopt;
+  }
+
+  int chance_index = 0;
+  const std::vector<PokerCard>& deck =
+      node.node_state->Setup()->BasicGame().Deck();
+  for (PokerCard deck_card : deck) {
+    if (node.node_state->Board().Contains(deck_card)) {
+      continue;
+    }
+    if (deck_card.Value() == card.Value()) {
+      if (chance_index >= node.num_children) {
+        throw std::runtime_error(
+            "Chance child count does not match available deck cards");
+      }
+      return ChildNodeIdAt(node_id, chance_index);
+    }
+    ++chance_index;
+  }
+  return std::nullopt;
 }
 
 void PokerTree::Build(const NodeState& root_state) {
   nodes_.clear();
   std::vector<int> queue;
-  queue.push_back(AddNode(root_state, std::nullopt));
+  queue.push_back(AddNode(root_state, -1));
 
   for (std::size_t queue_index = 0; queue_index < queue.size();
        ++queue_index) {
@@ -152,8 +153,7 @@ void PokerTree::Build(const NodeState& root_state) {
   }
 }
 
-int PokerTree::AddNode(const NodeState& state,
-                       std::optional<int> parent_node_id) {
+int PokerTree::AddNode(const NodeState& state, int parent_node_id) {
   const int node_id = static_cast<int>(nodes_.size());
   nodes_.emplace_back(node_id, std::make_shared<NodeState>(state),
                       parent_node_id);
@@ -163,16 +163,18 @@ int PokerTree::AddNode(const NodeState& state,
 void PokerTree::ExpandPlayerNode(int node_id, std::vector<int>* queue) {
   const std::shared_ptr<const NodeState> node_state =
       Node(node_id).node_state;
+  const int children_offset = static_cast<int>(nodes_.size());
+  int num_children = 0;
   for (const Action& action : node_state->ValidActions()) {
     if (action.IsChance()) {
       throw std::runtime_error("Player node cannot expand chance action");
     }
     const NodeState child_state = node_state->CommitAction(action);
     const int child_node_id = AddNode(child_state, node_id);
-    nodes_[static_cast<std::size_t>(node_id)].child_edges.push_back(
-        PokerTreeEdge::PlayerAction(action, child_node_id));
     queue->push_back(child_node_id);
+    ++num_children;
   }
+  SetChildrenRange(node_id, children_offset, num_children);
 }
 
 void PokerTree::ExpandChanceNode(int node_id, std::vector<int>* queue) {
@@ -180,39 +182,28 @@ void PokerTree::ExpandChanceNode(int node_id, std::vector<int>* queue) {
       Node(node_id).node_state;
   const std::vector<PokerCard>& deck =
       node_state->Setup()->BasicGame().Deck();
+  const int children_offset = static_cast<int>(nodes_.size());
+  int num_children = 0;
   for (PokerCard card : deck) {
     if (node_state->Board().Contains(card)) {
       continue;
     }
     const NodeState child_state = node_state->CommitChanceAction(card);
     const int child_node_id = AddNode(child_state, node_id);
-    nodes_[static_cast<std::size_t>(node_id)].child_edges.push_back(
-        PokerTreeEdge::Chance(card, child_node_id));
     queue->push_back(child_node_id);
+    ++num_children;
   }
+  SetChildrenRange(node_id, children_offset, num_children);
 }
 
-std::optional<int> PokerTree::FindNodeFromStrippedPath(
-    const std::vector<PokerTreeEdge>& path) const {
-  int current_node_id = 0;
-  for (const PokerTreeEdge& path_step : path) {
-    const PokerTreeNode& node = Node(current_node_id);
-    std::optional<int> matched_node_id;
-    for (const PokerTreeEdge& edge : node.child_edges) {
-      if (!EdgeMatchesPathStep(edge, path_step)) {
-        continue;
-      }
-      if (matched_node_id.has_value()) {
-        return std::nullopt;
-      }
-      matched_node_id = edge.child_node_id;
-    }
-    if (!matched_node_id.has_value()) {
-      return std::nullopt;
-    }
-    current_node_id = matched_node_id.value();
+void PokerTree::SetChildrenRange(int node_id, int children_offset,
+                                 int num_children) {
+  if (num_children < 0) {
+    throw std::invalid_argument("Poker tree child count cannot be negative");
   }
-  return current_node_id;
+  PokerTreeNode& node = nodes_[static_cast<std::size_t>(node_id)];
+  node.children_offset = num_children == 0 ? -1 : children_offset;
+  node.num_children = num_children;
 }
 
 }  // namespace fisher::game::poker

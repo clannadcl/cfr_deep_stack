@@ -12,26 +12,15 @@ namespace fisher::game::poker {
 
 class SubgameSetup;
 
-struct PokerTreeEdge {
-  PokerTreeEdge(Action action, std::optional<PokerCard> chance_card,
-                int child_node_id);
-
-  static PokerTreeEdge PlayerAction(Action action, int child_node_id);
-  static PokerTreeEdge Chance(PokerCard card, int child_node_id);
-
-  Action action;
-  std::optional<PokerCard> chance_card;
-  int child_node_id;
-};
-
 struct PokerTreeNode {
   PokerTreeNode(int node_id, std::shared_ptr<const NodeState> node_state,
-                std::optional<int> parent_node_id);
+                int parent_node_id);
 
   int node_id;
   std::shared_ptr<const NodeState> node_state;
-  std::optional<int> parent_node_id;
-  std::vector<PokerTreeEdge> child_edges;
+  int parent_node_id;
+  int children_offset = -1;
+  int num_children = 0;
 };
 
 class PokerTree {
@@ -43,18 +32,20 @@ class PokerTree {
   const PokerTreeNode& Node(int node_id) const;
   const PokerTreeNode& Root() const;
   int NumNodes() const;
+  bool HasChildren(int node_id) const;
+  int ChildNodeIdAt(int node_id, int child_index) const;
 
   std::optional<int> FindNode(
       const std::vector<Action>& action_history) const;
-  std::optional<int> FindNode(const std::vector<PokerTreeEdge>& path) const;
+  std::optional<int> FindChild(int node_id, const Action& action) const;
+  std::optional<int> FindChanceChild(int node_id, PokerCard card) const;
 
  private:
   void Build(const NodeState& root_state);
-  int AddNode(const NodeState& state, std::optional<int> parent_node_id);
+  int AddNode(const NodeState& state, int parent_node_id);
   void ExpandPlayerNode(int node_id, std::vector<int>* queue);
   void ExpandChanceNode(int node_id, std::vector<int>* queue);
-  std::optional<int> FindNodeFromStrippedPath(
-      const std::vector<PokerTreeEdge>& path) const;
+  void SetChildrenRange(int node_id, int children_offset, int num_children);
 
   std::vector<PokerTreeNode> nodes_;
 };

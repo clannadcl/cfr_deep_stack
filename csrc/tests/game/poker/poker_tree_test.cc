@@ -1,6 +1,5 @@
 #include <array>
 #include <memory>
-#include <optional>
 #include <stdexcept>
 #include <vector>
 
@@ -58,37 +57,9 @@ std::shared_ptr<fisher::game::poker::SubgameSetup> MakeSetup(
       /*min_raise_size=*/1.0f));
 }
 
-const fisher::game::poker::PokerTreeEdge& FindChildEdge(
-    const fisher::game::poker::PokerTreeNode& node,
-    const fisher::game::poker::Action& action) {
-  for (const fisher::game::poker::PokerTreeEdge& edge : node.child_edges) {
-    if (edge.action == action) {
-      return edge;
-    }
-  }
-  throw std::runtime_error("child edge not found");
-}
-
 bool SameCard(fisher::game::poker::PokerCard left,
               fisher::game::poker::PokerCard right) {
   return left.Value() == right.Value();
-}
-
-const fisher::game::poker::PokerTreeEdge& FindChanceEdge(
-    const fisher::game::poker::PokerTreeNode& node,
-    fisher::game::poker::PokerCard card) {
-  for (const fisher::game::poker::PokerTreeEdge& edge : node.child_edges) {
-    if (edge.chance_card.has_value() &&
-        SameCard(edge.chance_card.value(), card)) {
-      return edge;
-    }
-  }
-  throw std::runtime_error("chance edge not found");
-}
-
-std::vector<fisher::game::poker::PokerTreeEdge> Path(
-    std::initializer_list<fisher::game::poker::PokerTreeEdge> edges) {
-  return std::vector<fisher::game::poker::PokerTreeEdge>(edges);
 }
 
 }  // namespace
@@ -99,7 +70,6 @@ int main() {
   using fisher::game::poker::PokerCard;
   using fisher::game::poker::PokerCards;
   using fisher::game::poker::PokerTree;
-  using fisher::game::poker::PokerTreeEdge;
   using fisher::game::poker::TerminalStatus;
 
   auto river_setup =
@@ -110,21 +80,23 @@ int main() {
 
   Expect(river_tree.NumNodes() == 9, "river all-in tree node count mismatch");
   Expect(river_tree.Root().node_id == 0, "root id mismatch");
-  Expect(!river_tree.Root().parent_node_id.has_value(),
+  Expect(river_tree.Root().parent_node_id == -1,
          "root parent should be empty");
   Expect(river_tree.Root().node_state->Board().ToString() == "AsKdQh2c3d",
          "root state board mismatch");
-  Expect(river_tree.Root().child_edges.size() == 2,
-         "root child count mismatch");
-  Expect(river_tree.Root().child_edges[0].action == Action::Check(),
-         "root first child should be check");
-  Expect(river_tree.Root().child_edges[1].action == Action::Bet(1.0f),
-         "root second child should be allin bet");
-  Expect(!river_tree.Root().child_edges[0].chance_card.has_value(),
-         "player edge should not have chance card");
+  Expect(river_tree.Root().children_offset == 1,
+         "root children offset mismatch");
+  Expect(river_tree.Root().num_children == 2, "root child count mismatch");
+  Expect(river_tree.HasChildren(0), "root should have children");
+  Expect(river_tree.ChildNodeIdAt(0, 0) == 1,
+         "root first child id mismatch");
+  Expect(river_tree.ChildNodeIdAt(0, 1) == 2,
+         "root second child id mismatch");
 
-  const int check_node_id = river_tree.Root().child_edges[0].child_node_id;
-  const int bet_node_id = river_tree.Root().child_edges[1].child_node_id;
+  const int check_node_id =
+      river_tree.FindChild(0, Action::Check()).value();
+  const int bet_node_id =
+      river_tree.FindChild(0, Action::Bet(1.0f)).value();
   Expect(check_node_id == 1, "check child id should be 1");
   Expect(bet_node_id == 2, "bet child id should be 2");
   Expect(river_tree.Node(check_node_id).parent_node_id == 0,
@@ -132,39 +104,40 @@ int main() {
   Expect(river_tree.Node(bet_node_id).parent_node_id == 0,
          "bet parent mismatch");
 
-  const fisher::game::poker::PokerTreeNode& check_node =
-      river_tree.Node(check_node_id);
-  Expect(check_node.child_edges.size() == 2, "check node child count");
-  Expect(check_node.child_edges[0].child_node_id == 3,
+  const auto& check_node = river_tree.Node(check_node_id);
+  Expect(check_node.children_offset == 3, "check node offset mismatch");
+  Expect(check_node.num_children == 2, "check node child count");
+  Expect(river_tree.ChildNodeIdAt(check_node_id, 0) == 3,
          "BFS child id after check-check mismatch");
-  Expect(check_node.child_edges[1].child_node_id == 4,
+  Expect(river_tree.ChildNodeIdAt(check_node_id, 1) == 4,
          "BFS child id after check-bet mismatch");
-  Expect(check_node.child_edges[0].action == Action::Check(),
+  Expect(river_tree.FindChild(check_node_id, Action::Check()).value() == 3,
          "check node first action mismatch");
-  Expect(check_node.child_edges[1].action == Action::Bet(1.0f),
+  Expect(river_tree.FindChild(check_node_id, Action::Bet(1.0f)).value() == 4,
          "check node second action mismatch");
 
-  const fisher::game::poker::PokerTreeNode& bet_node =
-      river_tree.Node(bet_node_id);
-  Expect(bet_node.child_edges.size() == 2, "bet node child count");
-  Expect(bet_node.child_edges[0].child_node_id == 5,
-         "BFS fold child id mismatch");
-  Expect(bet_node.child_edges[1].child_node_id == 6,
-         "BFS call child id mismatch");
-  Expect(bet_node.child_edges[0].action == Action::Fold(),
+  const auto& bet_node = river_tree.Node(bet_node_id);
+  Expect(bet_node.children_offset == 5, "bet node offset mismatch");
+  Expect(bet_node.num_children == 2, "bet node child count");
+  Expect(river_tree.FindChild(bet_node_id, Action::Fold()).value() == 5,
          "bet node first action should be fold");
-  Expect(bet_node.child_edges[1].action == Action::Call(),
+  Expect(river_tree.FindChild(bet_node_id, Action::Call()).value() == 6,
          "bet node second action should be call");
 
-  const int check_check_id = check_node.child_edges[0].child_node_id;
+  const int check_check_id =
+      river_tree.FindChild(check_node_id, Action::Check()).value();
   Expect(river_tree.Node(check_check_id).node_state->Status() ==
              TerminalStatus::kShowdownTerminal,
          "river check-check should be showdown terminal");
-  Expect(river_tree.Node(check_check_id).child_edges.empty(),
+  Expect(!river_tree.HasChildren(check_check_id),
          "terminal node should not have children");
+  Expect(river_tree.Node(check_check_id).children_offset == -1,
+         "terminal node offset mismatch");
+  Expect(river_tree.Node(check_check_id).num_children == 0,
+         "terminal node child count mismatch");
 
-  const int fold_id = bet_node.child_edges[0].child_node_id;
-  const int call_id = bet_node.child_edges[1].child_node_id;
+  const int fold_id = river_tree.FindChild(bet_node_id, Action::Fold()).value();
+  const int call_id = river_tree.FindChild(bet_node_id, Action::Call()).value();
   Expect(river_tree.Node(fold_id).node_state->Status() ==
              TerminalStatus::kFoldTerminal,
          "fold child terminal status mismatch");
@@ -172,18 +145,21 @@ int main() {
              TerminalStatus::kShowdownTerminal,
          "call child terminal status mismatch");
 
-  const fisher::game::poker::PokerTreeNode& check_bet_node =
-      river_tree.Node(check_node.child_edges[1].child_node_id);
-  Expect(check_bet_node.child_edges.size() == 2,
+  const int check_bet_id =
+      river_tree.FindChild(check_node_id, Action::Bet(1.0f)).value();
+  const auto& check_bet_node = river_tree.Node(check_bet_id);
+  Expect(check_bet_node.num_children == 2,
          "check-bet node should have fold/call children");
-  Expect(check_bet_node.child_edges[0].action == Action::Fold(),
+  Expect(river_tree.FindChild(check_bet_id, Action::Fold()).has_value(),
          "check-bet first child should be fold");
-  Expect(check_bet_node.child_edges[1].action == Action::Call(),
+  Expect(river_tree.FindChild(check_bet_id, Action::Call()).has_value(),
          "check-bet second child should be call");
-  Expect(river_tree.Node(check_bet_node.child_edges[0].child_node_id)
+  Expect(river_tree.Node(river_tree.FindChild(check_bet_id, Action::Fold())
+                             .value())
              .node_state->Status() == TerminalStatus::kFoldTerminal,
          "check-bet fold should be terminal");
-  Expect(river_tree.Node(check_bet_node.child_edges[1].child_node_id)
+  Expect(river_tree.Node(river_tree.FindChild(check_bet_id, Action::Call())
+                             .value())
              .node_state->Status() == TerminalStatus::kShowdownTerminal,
          "check-bet call should be showdown");
 
@@ -198,10 +174,16 @@ int main() {
          "local bet-call path should find call node");
   Expect(!river_tree.FindNode(std::vector<Action>{Action::Call()}).has_value(),
          "invalid local path should not be found");
+  Expect(!river_tree.FindChild(0, Action::Call()).has_value(),
+         "invalid root child action should not be found");
   ExpectInvalidArgument([&] { river_tree.Node(-1); },
                         "negative node id should be invalid");
   ExpectInvalidArgument([&] { river_tree.Node(999); },
                         "large node id should be invalid");
+  ExpectInvalidArgument([&] { river_tree.ChildNodeIdAt(0, -1); },
+                        "negative child index should be invalid");
+  ExpectInvalidArgument([&] { river_tree.ChildNodeIdAt(0, 2); },
+                        "large child index should be invalid");
 
   auto prefix_setup = MakeSetup(
       PokerCards("AsKdQh2c3d"), 10.0f, {1.0f, 1.0f}, {2.5f, 2.5f},
@@ -228,17 +210,17 @@ int main() {
   Expect(chance_tree.Root().node_state->ActorPlayer() ==
              NodeState::kChancePlayer,
          "chance tree root should be chance node");
-  Expect(chance_tree.Root().child_edges.size() == 49,
+  Expect(chance_tree.Root().children_offset == 1,
+         "chance root offset mismatch");
+  Expect(chance_tree.Root().num_children == 49,
          "flop chance should create 49 children");
-  Expect(chance_tree.Root().child_edges[0].action == Action::Chance(),
-         "chance child action mismatch");
-  Expect(chance_tree.Root().child_edges[0].chance_card.has_value(),
-         "chance child must carry card");
-  Expect(SameCard(chance_tree.Root().child_edges[0].chance_card.value(),
-                  PokerCard("2c")),
-         "first chance card should follow deck order");
-  Expect(chance_tree.Root().child_edges[0].child_node_id == 1,
+  Expect(chance_tree.ChildNodeIdAt(0, 0) == 1,
          "first chance child id mismatch");
+  Expect(chance_tree.FindChanceChild(0, PokerCard("2c")).value() == 1,
+         "first chance card should follow deck order");
+  Expect(chance_tree.FindChanceChild(0, PokerCard("2d")).value() ==
+             chance_tree.ChildNodeIdAt(0, 1),
+         "second chance card should follow deck order");
   Expect(chance_tree.Node(1).parent_node_id == 0,
          "chance child parent mismatch");
   Expect(chance_tree.Node(1).node_state->Board().ToString() == "AsKdQh2c",
@@ -247,45 +229,24 @@ int main() {
          "chance child settled pot mismatch");
   Expect(chance_tree.Node(1).node_state->ActorPlayer() == 0,
          "chance child actor mismatch");
-  for (const PokerTreeEdge& edge : chance_tree.Root().child_edges) {
-    Expect(!SameCard(edge.chance_card.value(), PokerCard("As")),
-           "chance should not include board card As");
-    Expect(!SameCard(edge.chance_card.value(), PokerCard("Kd")),
-           "chance should not include board card Kd");
-    Expect(!SameCard(edge.chance_card.value(), PokerCard("Qh")),
-           "chance should not include board card Qh");
-  }
+  Expect(!chance_tree.FindChanceChild(0, PokerCard("As")).has_value(),
+         "chance should not include board card As");
+  Expect(!chance_tree.FindChanceChild(0, PokerCard("Kd")).has_value(),
+         "chance should not include board card Kd");
+  Expect(!chance_tree.FindChanceChild(0, PokerCard("Qh")).has_value(),
+         "chance should not include board card Qh");
 
   Expect(!chance_tree.FindNode(
                     std::vector<Action>{Action::Check(), Action::Check(),
                                         Action::Chance()})
               .has_value(),
-         "action-only chance lookup should be ambiguous");
-  Expect(chance_tree
-             .FindNode(Path({PokerTreeEdge::PlayerAction(Action::Check(), 0),
-                             PokerTreeEdge::PlayerAction(Action::Check(), 0),
-                             PokerTreeEdge::Chance(PokerCard("2c"), 0)}))
-             .value() == 1,
-         "exact chance path should find 2c child");
-  Expect(chance_tree
-             .FindNode(Path({PokerTreeEdge::Chance(PokerCard("2d"), 0)}))
-             .value() ==
-             FindChanceEdge(chance_tree.Root(), PokerCard("2d")).child_node_id,
-         "local exact chance path should find 2d child");
-  Expect(!chance_tree
-              .FindNode(Path({PokerTreeEdge::Chance(PokerCard("As"), 0)}))
-              .has_value(),
-         "exact chance path with board card should not be found");
-  Expect(!chance_tree
-              .FindNode(Path({PokerTreeEdge::PlayerAction(Action::Bet(9.0f),
-                                                          0)}))
-              .has_value(),
-         "nonexistent exact path should not be found");
-
-  const PokerTreeEdge& found_check_edge =
-      FindChildEdge(river_tree.Root(), Action::Check());
-  Expect(found_check_edge.child_node_id == check_node_id,
-         "FindChildEdge helper sanity check failed");
+         "action-only chance lookup should be unsupported");
+  Expect(!chance_tree.FindChild(0, Action::Chance()).has_value(),
+         "FindChild should not resolve chance action");
+  Expect(!chance_tree.FindChanceChild(1, PokerCard("2d")).has_value(),
+         "non-chance node should not resolve chance child");
+  Expect(SameCard(PokerCard("2c"), PokerCard("2c")),
+         "SameCard helper sanity check failed");
 
   return 0;
 }

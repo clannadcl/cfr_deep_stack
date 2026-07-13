@@ -39,6 +39,7 @@ class TreeAbstractedBets {
     std::optional<AbstractedDonkBetConfig> river_donk_bets;
     float bet_to_allin_threshold = 75.0f;
     float add_allin_threshold = 250.0f;
+    float merging_threshold = 0.1f;
   };
 
   explicit TreeAbstractedBets(const Args& args);
@@ -54,6 +55,7 @@ class TreeAbstractedBets {
   const AbstractedDonkBetConfig& GetDonkBets(PokerRound round) const;
   float BetToAllInThreshold() const;
   float AddAllInThreshold() const;
+  float MergingThreshold() const;
   void SetStreetBets(PokerRound round, const AbstractedBetConfig& bets);
   void SetStreetBets(PokerRound round, const AbstractedBetStringConfig& bets);
   void SetDonkBets(PokerRound round, const AbstractedDonkBetConfig& bets);
@@ -61,6 +63,7 @@ class TreeAbstractedBets {
                    const AbstractedDonkBetStringConfig& bets);
   void SetBetToAllInThreshold(float threshold);
   void SetAddAllInThreshold(float threshold);
+  void SetMergingThreshold(float threshold);
 
  private:
   static AbstractedBetConfig ParseStringConfig(
@@ -83,6 +86,7 @@ class TreeAbstractedBets {
   AbstractedDonkBetConfig river_donk_bets_;
   float bet_to_allin_threshold_ = 75.0f;
   float add_allin_threshold_ = 250.0f;
+  float merging_threshold_ = 0.1f;
 };
 
 }  // namespace fisher::game::poker

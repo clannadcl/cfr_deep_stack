@@ -34,8 +34,9 @@ int main() {
   using fisher::game::poker::PokerRound;
   using fisher::game::poker::TreeAbstractedBets;
 
-  TreeAbstractedBets default_bets(AbstractedBetStringConfig{
-      {"33%", "50%", "75%", "allin"}, {"100%", "allin"}});
+  TreeAbstractedBets default_bets(
+      AbstractedBetStringConfig{{"33%", "50%", "75%", "allin"},
+                                {"100%", "2.5x", "e", "2e", "3e200%", "a"}});
 
   const std::vector<AbstractedAction>& preflop_open =
       default_bets.GetBets(PokerRound::kPreflop, 0);
@@ -46,9 +47,18 @@ int main() {
 
   const std::vector<AbstractedAction>& flop_raise =
       default_bets.GetBets(PokerRound::kFlop, 1);
-  Expect(flop_raise.size() == 2, "flop raise bet count mismatch");
+  Expect(flop_raise.size() == 6, "flop raise bet count mismatch");
   Expect(flop_raise[0].ToString() == "percent:100",
          "flop raise percent mismatch");
+  Expect(flop_raise[1].ToString() == "x:2.5",
+         "flop raise x config mismatch");
+  Expect(flop_raise[2].ToString() == "geo:0",
+         "flop raise e config mismatch");
+  Expect(flop_raise[3].ToString() == "geo:2",
+         "flop raise explicit e config mismatch");
+  Expect(flop_raise[4].ToString() == "geo:3:200",
+         "flop raise capped e config mismatch");
+  Expect(flop_raise[5].ToString() == "allin", "flop raise a mismatch");
 
   const std::vector<AbstractedAction>& river_late_raise =
       default_bets.GetBets(PokerRound::kRiver, 99);
@@ -61,12 +71,17 @@ int main() {
          "default bet-to-allin threshold mismatch");
   Expect(default_bets.AddAllInThreshold() == 250.0f,
          "default add-allin threshold mismatch");
+  Expect(default_bets.MergingThreshold() == 0.1f,
+         "default merging threshold mismatch");
   default_bets.SetBetToAllInThreshold(0.75f);
   default_bets.SetAddAllInThreshold(0.25f);
+  default_bets.SetMergingThreshold(0.1f);
   Expect(default_bets.BetToAllInThreshold() == 0.75f,
          "bet-to-allin threshold mismatch");
   Expect(default_bets.AddAllInThreshold() == 0.25f,
          "add-allin threshold mismatch");
+  Expect(default_bets.MergingThreshold() == 0.1f,
+         "merging threshold mismatch");
 
   TreeAbstractedBets street_bets(AbstractedBetStringConfig{{"33%"}});
   street_bets.SetStreetBets(PokerRound::kPreflop,
@@ -107,6 +122,7 @@ int main() {
   args.turn_donk_bets = AbstractedDonkBetConfig{AbstractedAction::AllIn()};
   args.bet_to_allin_threshold = 60.0f;
   args.add_allin_threshold = 180.0f;
+  args.merging_threshold = 0.2f;
   TreeAbstractedBets args_bets(args);
   Expect(args_bets.GetBets(PokerRound::kPreflop, 0)[0].ToString() ==
              "percent:33",
@@ -120,6 +136,8 @@ int main() {
          "args bet-to-allin threshold mismatch");
   Expect(args_bets.AddAllInThreshold() == 180.0f,
          "args add-allin threshold mismatch");
+  Expect(args_bets.MergingThreshold() == 0.2f,
+         "args merging threshold mismatch");
 
   ExpectInvalidArgument(
       [] { TreeAbstractedBets invalid(AbstractedBetStringConfig{}); },
@@ -139,6 +157,12 @@ int main() {
   ExpectInvalidArgument(
       [] { TreeAbstractedBets invalid(AbstractedBetStringConfig{{"-1%"}}); },
       "negative percent should be invalid");
+  ExpectInvalidArgument(
+      [] { TreeAbstractedBets invalid(AbstractedBetStringConfig{{"1x"}}); },
+      "small x multiplier should be invalid");
+  ExpectInvalidArgument(
+      [] { TreeAbstractedBets invalid(AbstractedBetStringConfig{{"2ebb"}}); },
+      "geometric cap without percent should be invalid");
   ExpectInvalidArgument(
       [&] { default_bets.GetBets(PokerRound::kFlop, -1); },
       "negative raise count should be invalid");
@@ -167,6 +191,9 @@ int main() {
   ExpectInvalidArgument(
       [&] { default_bets.SetAddAllInThreshold(-0.1f); },
       "negative add-allin threshold should be invalid");
+  ExpectInvalidArgument(
+      [&] { default_bets.SetMergingThreshold(-0.1f); },
+      "negative merging threshold should be invalid");
 
   return 0;
 }

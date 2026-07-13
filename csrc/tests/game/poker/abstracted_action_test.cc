@@ -50,6 +50,29 @@ int main() {
          "bb bet type mismatch");
   Expect(big_blind.Amount() == 35.5f, "bb bet amount mismatch");
 
+  const AbstractedAction previous_bet_multiplier =
+      AbstractedAction::BetPreviousBetMultiplier(2.5f);
+  Expect(previous_bet_multiplier.ToString() == "x:2.5",
+         "previous bet multiplier string mismatch");
+  Expect(previous_bet_multiplier.Type() ==
+             AbstractedActionType::kBetPreviousBetMultiplier,
+         "previous bet multiplier type mismatch");
+  Expect(previous_bet_multiplier.Amount() == 2.5f,
+         "previous bet multiplier amount mismatch");
+
+  const AbstractedAction geometric = AbstractedAction::BetGeometric(0.0f);
+  Expect(geometric.ToString() == "geo:0", "geometric string mismatch");
+  Expect(geometric.Type() == AbstractedActionType::kBetGeometric,
+         "geometric type mismatch");
+  Expect(geometric.Amount() == 0.0f, "geometric amount mismatch");
+
+  const AbstractedAction capped_geometric =
+      AbstractedAction::BetGeometric(3.0f, 200.0f);
+  Expect(capped_geometric.ToString() == "geo:3:200",
+         "capped geometric string mismatch");
+  Expect(capped_geometric.MaxPercent() == 200.0f,
+         "capped geometric max percent mismatch");
+
   const AbstractedAction allin = AbstractedAction::AllIn();
   Expect(allin.ToString() == "allin", "allin string mismatch");
   Expect(allin.Type() == AbstractedActionType::kAllIn,
@@ -73,6 +96,13 @@ int main() {
                         "negative percent bet should be invalid");
   ExpectInvalidArgument([] { AbstractedAction::BetBigBlind(-1.0f); },
                         "negative bb bet should be invalid");
+  ExpectInvalidArgument(
+      [] { AbstractedAction::BetPreviousBetMultiplier(1.0f); },
+      "small previous bet multiplier should be invalid");
+  ExpectInvalidArgument([] { AbstractedAction::BetGeometric(-1.0f); },
+                        "negative geometric streets should be invalid");
+  ExpectInvalidArgument([] { AbstractedAction::BetGeometric(1.0f, -1.0f); },
+                        "negative geometric cap should be invalid");
 
   return 0;
 }
