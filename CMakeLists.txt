@@ -14,6 +14,7 @@ add_library(fisher_core STATIC
   third_party/hand-isomorphism/src/deck.c
   third_party/hand-isomorphism/src/hand_index.c
   csrc/src/algorithm/cfr.cc
+  csrc/src/algorithm/cfr_storage.cc
   csrc/src/game/kuhn.cc
   csrc/src/game/poker/abstracted_action.cc
   csrc/src/game/poker/action_resolver.cc
@@ -54,6 +55,17 @@ if(FISHER_BUILD_TESTS)
   )
 
   add_test(NAME kuhn_cfr_test COMMAND kuhn_cfr_test)
+
+  add_executable(cfr_storage_test
+    csrc/tests/algorithm/cfr_storage_test.cc
+  )
+
+  target_link_libraries(cfr_storage_test
+    PRIVATE
+      fisher_core
+  )
+
+  add_test(NAME cfr_storage_test COMMAND cfr_storage_test)
 
   add_executable(action_test
     csrc/tests/game/poker/action_test.cc
