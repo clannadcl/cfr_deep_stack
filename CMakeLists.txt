@@ -15,12 +15,14 @@ add_library(fisher_core STATIC
   third_party/hand-isomorphism/src/hand_index.c
   csrc/src/algorithm/cfr.cc
   csrc/src/algorithm/cfr_storage.cc
+  csrc/src/algorithm/data_propagation.cc
   csrc/src/game/kuhn.cc
   csrc/src/game/poker/abstracted_action.cc
   csrc/src/game/poker/action_resolver.cc
   csrc/src/game/poker/action.cc
   csrc/src/game/poker/belief.cc
   csrc/src/game/poker/game_basic.cc
+  csrc/src/game/poker/isomorphic_mapping.cc
   csrc/src/game/poker/node_state.cc
   csrc/src/game/poker/poker_cards_isomorphic_index.cc
   csrc/src/game/poker/poker_card.cc
@@ -66,6 +68,17 @@ if(FISHER_BUILD_TESTS)
   )
 
   add_test(NAME cfr_storage_test COMMAND cfr_storage_test)
+
+  add_executable(data_propagation_test
+    csrc/tests/algorithm/data_propagation_test.cc
+  )
+
+  target_link_libraries(data_propagation_test
+    PRIVATE
+      fisher_core
+  )
+
+  add_test(NAME data_propagation_test COMMAND data_propagation_test)
 
   add_executable(action_test
     csrc/tests/game/poker/action_test.cc
@@ -155,6 +168,17 @@ if(FISHER_BUILD_TESTS)
   )
 
   add_test(NAME game_basic_test COMMAND game_basic_test)
+
+  add_executable(isomorphic_mapping_test
+    csrc/tests/game/poker/isomorphic_mapping_test.cc
+  )
+
+  target_link_libraries(isomorphic_mapping_test
+    PRIVATE
+      fisher_core
+  )
+
+  add_test(NAME isomorphic_mapping_test COMMAND isomorphic_mapping_test)
 
   add_executable(tree_abstracted_bets_test
     csrc/tests/game/poker/tree_abstracted_bets_test.cc

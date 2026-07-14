@@ -61,6 +61,52 @@ PokerCard ApplySuitMap(PokerCard card, const std::array<int, kNumSuits>& map) {
   return PokerCard(static_cast<uint8_t>(rank * kNumSuits + map[suit]));
 }
 
+bool TryBuildSuitMapFromCards(const std::vector<PokerCard>& from_cards,
+                              const std::vector<PokerCard>& to_cards,
+                              std::size_t from_index,
+                              std::vector<bool>* used_to_cards,
+                              std::array<int, kNumSuits>* suit_map,
+                              std::array<bool, kNumSuits>* used_targets) {
+  if (from_index == from_cards.size()) {
+    return true;
+  }
+
+  const PokerCard from_card = from_cards[from_index];
+  const int from_suit = static_cast<int>(from_card.Suit());
+  for (std::size_t to_index = 0; to_index < to_cards.size(); ++to_index) {
+    if ((*used_to_cards)[to_index] ||
+        from_card.Rank() != to_cards[to_index].Rank()) {
+      continue;
+    }
+
+    const int to_suit = static_cast<int>(to_cards[to_index].Suit());
+    if ((*suit_map)[from_suit] != -1 && (*suit_map)[from_suit] != to_suit) {
+      continue;
+    }
+    if ((*suit_map)[from_suit] == -1 && (*used_targets)[to_suit]) {
+      continue;
+    }
+
+    const int previous_target = (*suit_map)[from_suit];
+    const bool assigned_new_target = previous_target == -1;
+    (*suit_map)[from_suit] = to_suit;
+    (*used_targets)[to_suit] = true;
+    (*used_to_cards)[to_index] = true;
+
+    if (TryBuildSuitMapFromCards(from_cards, to_cards, from_index + 1,
+                                 used_to_cards, suit_map, used_targets)) {
+      return true;
+    }
+
+    (*used_to_cards)[to_index] = false;
+    if (assigned_new_target) {
+      (*suit_map)[from_suit] = -1;
+      (*used_targets)[to_suit] = false;
+    }
+  }
+  return false;
+}
+
 std::array<int, kNumSuits> BuildSuitMap(
     const std::vector<PokerCard>& from_prefix,
     const std::vector<PokerCard>& to_prefix) {
@@ -71,24 +117,10 @@ std::array<int, kNumSuits> BuildSuitMap(
   std::array<int, kNumSuits> suit_map;
   suit_map.fill(-1);
   std::array<bool, kNumSuits> used_targets{};
-
-  for (std::size_t index = 0; index < from_prefix.size(); ++index) {
-    if (from_prefix[index].Rank() != to_prefix[index].Rank()) {
-      throw std::runtime_error(
-          "Cannot map representatives with different ranks");
-    }
-
-    const int from_suit = static_cast<int>(from_prefix[index].Suit());
-    const int to_suit = static_cast<int>(to_prefix[index].Suit());
-    if (suit_map[from_suit] != -1 && suit_map[from_suit] != to_suit) {
-      throw std::runtime_error("Inconsistent suit representative map");
-    }
-    if (suit_map[from_suit] == -1 && used_targets[to_suit]) {
-      throw std::runtime_error("Suit representative map is not one-to-one");
-    }
-
-    suit_map[from_suit] = to_suit;
-    used_targets[to_suit] = true;
+  std::vector<bool> used_to_cards(to_prefix.size(), false);
+  if (!TryBuildSuitMapFromCards(from_prefix, to_prefix, 0, &used_to_cards,
+                                &suit_map, &used_targets)) {
+    throw std::runtime_error("Cannot build suit representative map");
   }
 
   for (int suit = 0; suit < kNumSuits; ++suit) {
