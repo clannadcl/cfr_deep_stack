@@ -92,6 +92,8 @@ int NodeState::NumRaisesCurrentRound() const {
   return num_raises_current_round_;
 }
 
+int NodeState::NumHands() const { return GameBasic::kNumHands; }
+
 const std::array<bool, 2>& NodeState::IsFold() const { return is_fold_; }
 
 TerminalStatus NodeState::Status() const { return terminal_status_; }

@@ -13,18 +13,17 @@ bool IsPlayerNode(const game::poker::PokerTreeNode& node) {
 
 }  // namespace
 
-CfrStorage::CfrStorage(const game::poker::PokerTree& tree, int num_hands)
-    : num_hands_(num_hands) {
-  if (num_hands <= 0) {
-    throw std::invalid_argument("CFR storage num_hands must be positive");
-  }
-
+CfrStorage::CfrStorage(const game::poker::PokerTree& tree) {
   layouts_.resize(static_cast<std::size_t>(tree.NumNodes()));
   for (const game::poker::PokerTreeNode& node : tree.Nodes()) {
     NodeCfrLayout& layout = layouts_[static_cast<std::size_t>(node.node_id)];
-    layout.num_hands = num_hands_;
+    layout.num_hands = node.node_state->NumHands();
+    if (layout.num_hands <= 0) {
+      throw std::invalid_argument("CFR storage node num_hands must be positive");
+    }
     layout.cfv_offset = static_cast<int>(cfv_.size());
-    cfv_.resize(cfv_.size() + static_cast<std::size_t>(num_hands_), 0.0f);
+    cfv_.resize(cfv_.size() + static_cast<std::size_t>(layout.num_hands),
+                0.0f);
 
     if (!IsPlayerNode(node)) {
       continue;
@@ -41,7 +40,7 @@ CfrStorage::CfrStorage(const game::poker::PokerTree& tree, int num_hands)
     }
 
     layout.num_actions = node.num_children;
-    const int action_hand_size = layout.num_actions * num_hands_;
+    const int action_hand_size = layout.num_actions * layout.num_hands;
     layout.strategy_offset = static_cast<int>(strategy_.size());
     strategy_.resize(strategy_.size() +
                          static_cast<std::size_t>(action_hand_size),
@@ -56,7 +55,9 @@ int CfrStorage::NumNodes() const {
   return static_cast<int>(layouts_.size());
 }
 
-int CfrStorage::NumHands() const { return num_hands_; }
+int CfrStorage::NumHands(int node_id) const {
+  return Layout(node_id).num_hands;
+}
 
 int CfrStorage::NumActions(int node_id) const {
   return Layout(node_id).num_actions;

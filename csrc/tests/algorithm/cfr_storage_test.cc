@@ -70,12 +70,13 @@ int main() {
                 {0.0f, 0.0f}, {0.0f, 0.0f}, /*current_player=*/0,
                 /*last_aggressor=*/0, /*raise_count=*/0);
   PokerTree river_tree(river_setup);
-  CfrStorage storage(river_tree, /*num_hands=*/3);
+  CfrStorage storage(river_tree);
+  const int num_hands = river_tree.Root().node_state->NumHands();
 
   Expect(storage.NumNodes() == river_tree.NumNodes(), "node count mismatch");
-  Expect(storage.NumHands() == 3, "num hands mismatch");
+  Expect(storage.NumHands(0) == num_hands, "num hands mismatch");
   Expect(storage.CfvData().size() ==
-             static_cast<std::size_t>(river_tree.NumNodes() * 3),
+             static_cast<std::size_t>(river_tree.NumNodes() * num_hands),
          "cfv data size mismatch");
 
   const auto& root_layout = storage.Layout(0);
@@ -83,27 +84,31 @@ int main() {
   Expect(root_layout.regret_offset == 0, "root regret offset mismatch");
   Expect(root_layout.cfv_offset == 0, "root cfv offset mismatch");
   Expect(root_layout.num_actions == 2, "root action count mismatch");
-  Expect(root_layout.num_hands == 3, "root layout hand count mismatch");
-  Expect(storage.StrategyData().size() >= 6,
+  Expect(root_layout.num_hands == num_hands,
+         "root layout hand count mismatch");
+  Expect(storage.StrategyData().size() >= static_cast<std::size_t>(2 * num_hands),
          "strategy data should contain root actions");
-  Expect(storage.RegretData().size() >= 6,
+  Expect(storage.RegretData().size() >= static_cast<std::size_t>(2 * num_hands),
          "regret data should contain root actions");
 
-  storage.StrategyAt(0, 1, 2) = 0.75f;
+  storage.StrategyAt(0, 1, num_hands - 1) = 0.75f;
   storage.RegretAt(0, 0, 1) = -1.25f;
-  storage.CfvAt(0, 2) = 3.5f;
+  storage.CfvAt(0, num_hands - 1) = 3.5f;
   const CfrStorage& const_storage = storage;
-  Expect(const_storage.StrategyAt(0, 1, 2) == 0.75f,
+  Expect(const_storage.StrategyAt(0, 1, num_hands - 1) == 0.75f,
          "strategy at mismatch");
   Expect(const_storage.RegretAt(0, 0, 1) == -1.25f,
          "regret at mismatch");
-  Expect(const_storage.CfvAt(0, 2) == 3.5f, "cfv at mismatch");
+  Expect(const_storage.CfvAt(0, num_hands - 1) == 3.5f,
+         "cfv at mismatch");
 
   const int check_node_id =
       river_tree.FindChild(0, Action::Check()).value();
   Expect(storage.NumActions(check_node_id) == 2,
          "check node action count mismatch");
-  Expect(storage.Layout(check_node_id).strategy_offset == 6,
+  Expect(storage.NumHands(check_node_id) == num_hands,
+         "check node hand count mismatch");
+  Expect(storage.Layout(check_node_id).strategy_offset == 2 * num_hands,
          "check node strategy offset should follow root block");
 
   const int check_check_id =
@@ -112,8 +117,8 @@ int main() {
          "check-check should be terminal");
   Expect(storage.Layout(check_check_id).num_actions == 0,
          "terminal node should not have strategy actions");
-  storage.CfvAt(check_check_id, 1) = 9.0f;
-  Expect(storage.CfvAt(check_check_id, 1) == 9.0f,
+  storage.CfvAt(check_check_id, num_hands - 1) = 9.0f;
+  Expect(storage.CfvAt(check_check_id, num_hands - 1) == 9.0f,
          "terminal cfv access mismatch");
   ExpectInvalidArgument(
       [&] { storage.StrategyAt(check_check_id, 0, 0); },
@@ -130,24 +135,24 @@ int main() {
           .CommitAction(Action::Check())
           .CommitAction(Action::Check());
   PokerTree chance_tree(chance_root);
-  CfrStorage chance_storage(chance_tree, /*num_hands=*/2);
+  CfrStorage chance_storage(chance_tree);
+  const int chance_num_hands = chance_tree.Root().node_state->NumHands();
   Expect(chance_tree.Root().node_state->ActorPlayer() ==
              NodeState::kChancePlayer,
          "chance root actor mismatch");
   Expect(chance_storage.Layout(0).num_actions == 0,
          "chance node should not have strategy actions");
   Expect(chance_storage.CfvData().size() ==
-             static_cast<std::size_t>(chance_tree.NumNodes() * 2),
+             static_cast<std::size_t>(chance_tree.NumNodes() *
+                                      chance_num_hands),
          "chance cfv data size mismatch");
-  chance_storage.CfvAt(0, 1) = 4.0f;
-  Expect(chance_storage.CfvAt(0, 1) == 4.0f,
+  chance_storage.CfvAt(0, chance_num_hands - 1) = 4.0f;
+  Expect(chance_storage.CfvAt(0, chance_num_hands - 1) == 4.0f,
          "chance cfv access mismatch");
   ExpectInvalidArgument(
       [&] { chance_storage.StrategyAt(0, 0, 0); },
       "chance strategy access should be invalid");
 
-  ExpectInvalidArgument([&] { CfrStorage invalid(river_tree, 0); },
-                        "zero hand count should be invalid");
   ExpectInvalidArgument([&] { storage.Layout(-1); },
                         "negative node id should be invalid");
   ExpectInvalidArgument([&] { storage.Layout(999); },
@@ -158,9 +163,9 @@ int main() {
                         "large action index should be invalid");
   ExpectInvalidArgument([&] { storage.StrategyAt(0, 0, -1); },
                         "negative hand index should be invalid");
-  ExpectInvalidArgument([&] { storage.StrategyAt(0, 0, 3); },
+  ExpectInvalidArgument([&] { storage.StrategyAt(0, 0, num_hands); },
                         "large hand index should be invalid");
-  ExpectInvalidArgument([&] { storage.CfvAt(0, 3); },
+  ExpectInvalidArgument([&] { storage.CfvAt(0, num_hands); },
                         "large cfv hand index should be invalid");
 
   return 0;

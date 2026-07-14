@@ -59,6 +59,7 @@ class NodeState {
   int ActorPlayer() const;
   int LastAggressor() const;
   int NumRaisesCurrentRound() const;
+  int NumHands() const;
   const std::array<bool, 2>& IsFold() const;
   TerminalStatus Status() const;
   bool IsTerminal() const;

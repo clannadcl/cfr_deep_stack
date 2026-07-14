@@ -16,10 +16,10 @@ struct NodeCfrLayout {
 
 class CfrStorage {
  public:
-  CfrStorage(const game::poker::PokerTree& tree, int num_hands);
+  explicit CfrStorage(const game::poker::PokerTree& tree);
 
   int NumNodes() const;
-  int NumHands() const;
+  int NumHands(int node_id) const;
   int NumActions(int node_id) const;
   const NodeCfrLayout& Layout(int node_id) const;
 
@@ -44,7 +44,6 @@ class CfrStorage {
                       int hand_index, const char* storage_name) const;
   int HandIndex(const NodeCfrLayout& layout, int hand_index) const;
 
-  int num_hands_;
   std::vector<NodeCfrLayout> layouts_;
   std::vector<float> strategy_;
   std::vector<float> regret_;
