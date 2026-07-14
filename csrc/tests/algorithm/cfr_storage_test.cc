@@ -86,6 +86,10 @@ int main() {
   Expect(root_layout.num_actions == 2, "root action count mismatch");
   Expect(root_layout.num_hands == num_hands,
          "root layout hand count mismatch");
+  Expect(root_layout.reach_offset[0] >= 0, "root player 0 reach missing");
+  Expect(root_layout.reach_offset[1] >= 0, "root player 1 reach missing");
+  Expect(root_layout.reach_offset[0] != root_layout.reach_offset[1],
+         "root players should use different reach blocks");
   Expect(storage.StrategyData().size() >= static_cast<std::size_t>(2 * num_hands),
          "strategy data should contain root actions");
   Expect(storage.RegretData().size() >= static_cast<std::size_t>(2 * num_hands),
@@ -101,6 +105,12 @@ int main() {
          "regret at mismatch");
   Expect(const_storage.CfvAt(0, num_hands - 1) == 3.5f,
          "cfv at mismatch");
+  storage.ReachAt(0, 0, 0) = 0.5f;
+  storage.ReachAt(0, 1, num_hands - 1) = 0.25f;
+  Expect(const_storage.ReachAt(0, 0, 0) == 0.5f,
+         "root player 0 reach mismatch");
+  Expect(const_storage.ReachAt(0, 1, num_hands - 1) == 0.25f,
+         "root player 1 reach mismatch");
 
   const int check_node_id =
       river_tree.FindChild(0, Action::Check()).value();
@@ -110,6 +120,15 @@ int main() {
          "check node hand count mismatch");
   Expect(storage.Layout(check_node_id).strategy_offset == 2 * num_hands,
          "check node strategy offset should follow root block");
+  Expect(storage.Layout(check_node_id).reach_offset[0] !=
+             root_layout.reach_offset[0],
+         "player 0 action should allocate new player 0 reach");
+  Expect(storage.Layout(check_node_id).reach_offset[1] ==
+             root_layout.reach_offset[1],
+         "player 0 action should share player 1 reach");
+  storage.ReachAt(check_node_id, 1, num_hands - 1) = 0.8f;
+  Expect(storage.ReachAt(0, 1, num_hands - 1) == 0.8f,
+         "shared opponent reach should update root block");
 
   const int check_check_id =
       river_tree.FindChild(check_node_id, Action::Check()).value();
@@ -117,6 +136,15 @@ int main() {
          "check-check should be terminal");
   Expect(storage.Layout(check_check_id).num_actions == 0,
          "terminal node should not have strategy actions");
+  Expect(storage.Layout(check_check_id).reach_offset[0] ==
+             storage.Layout(check_node_id).reach_offset[0],
+         "player 1 action should share player 0 reach");
+  Expect(storage.Layout(check_check_id).reach_offset[1] !=
+             storage.Layout(check_node_id).reach_offset[1],
+         "player 1 action should allocate new player 1 reach");
+  storage.ReachAt(check_check_id, 0, 0) = 0.9f;
+  Expect(storage.ReachAt(check_node_id, 0, 0) == 0.9f,
+         "shared player 0 reach should update parent block");
   storage.CfvAt(check_check_id, num_hands - 1) = 9.0f;
   Expect(storage.CfvAt(check_check_id, num_hands - 1) == 9.0f,
          "terminal cfv access mismatch");
@@ -142,6 +170,10 @@ int main() {
          "chance root actor mismatch");
   Expect(chance_storage.Layout(0).num_actions == 0,
          "chance node should not have strategy actions");
+  Expect(chance_storage.Layout(0).reach_offset[0] >= 0,
+         "chance root player 0 reach missing");
+  Expect(chance_storage.Layout(0).reach_offset[1] >= 0,
+         "chance root player 1 reach missing");
   Expect(chance_storage.CfvData().size() ==
              static_cast<std::size_t>(chance_tree.NumNodes() *
                                       chance_num_hands),
@@ -152,6 +184,22 @@ int main() {
   ExpectInvalidArgument(
       [&] { chance_storage.StrategyAt(0, 0, 0); },
       "chance strategy access should be invalid");
+
+  const int turn_child_id = chance_tree.ChildNodeIdAt(0, 0);
+  Expect(chance_tree.Node(turn_child_id).parent_node_id == 0,
+         "turn child parent mismatch");
+  Expect(chance_storage.Layout(turn_child_id).reach_offset[0] !=
+             chance_storage.Layout(0).reach_offset[0],
+         "chance child should allocate new player 0 reach");
+  Expect(chance_storage.Layout(turn_child_id).reach_offset[1] !=
+             chance_storage.Layout(0).reach_offset[1],
+         "chance child should allocate new player 1 reach");
+  chance_storage.ReachAt(0, 0, 0) = 0.3f;
+  Expect(chance_storage.ReachAt(turn_child_id, 0, 0) == 0.0f,
+         "chance child should not share player 0 reach with parent");
+  chance_storage.ReachAt(turn_child_id, 1, 0) = 0.7f;
+  Expect(chance_storage.ReachAt(0, 1, 0) == 0.0f,
+         "chance child should not share player 1 reach with parent");
 
   ExpectInvalidArgument([&] { storage.Layout(-1); },
                         "negative node id should be invalid");
@@ -167,6 +215,14 @@ int main() {
                         "large hand index should be invalid");
   ExpectInvalidArgument([&] { storage.CfvAt(0, num_hands); },
                         "large cfv hand index should be invalid");
+  ExpectInvalidArgument([&] { storage.ReachAt(0, -1, 0); },
+                        "negative reach player should be invalid");
+  ExpectInvalidArgument([&] { storage.ReachAt(0, 2, 0); },
+                        "large reach player should be invalid");
+  ExpectInvalidArgument([&] { storage.ReachAt(0, 0, -1); },
+                        "negative reach hand index should be invalid");
+  ExpectInvalidArgument([&] { storage.ReachAt(0, 0, num_hands); },
+                        "large reach hand index should be invalid");
 
   return 0;
 }

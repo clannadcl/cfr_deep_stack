@@ -3,6 +3,8 @@
 #include <stdexcept>
 #include <string>
 
+#include "game/poker/game_basic.h"
+
 namespace fisher::algorithm {
 namespace {
 
@@ -24,6 +26,7 @@ CfrStorage::CfrStorage(const game::poker::PokerTree& tree) {
     layout.cfv_offset = static_cast<int>(cfv_.size());
     cfv_.resize(cfv_.size() + static_cast<std::size_t>(layout.num_hands),
                 0.0f);
+    InitializeReachLayout(tree, node);
 
     if (!IsPlayerNode(node)) {
       continue;
@@ -105,6 +108,19 @@ const float& CfrStorage::CfvAt(int node_id, int hand_index) const {
   return cfv_[static_cast<std::size_t>(HandIndex(layout, hand_index))];
 }
 
+float& CfrStorage::ReachAt(int node_id, int player, int hand_index) {
+  const NodeCfrLayout& layout = Layout(node_id);
+  return reach_[static_cast<std::size_t>(
+      PlayerHandIndex(layout, player, hand_index))];
+}
+
+const float& CfrStorage::ReachAt(int node_id, int player,
+                                 int hand_index) const {
+  const NodeCfrLayout& layout = Layout(node_id);
+  return reach_[static_cast<std::size_t>(
+      PlayerHandIndex(layout, player, hand_index))];
+}
+
 std::vector<float>& CfrStorage::StrategyData() { return strategy_; }
 
 const std::vector<float>& CfrStorage::StrategyData() const {
@@ -119,9 +135,62 @@ std::vector<float>& CfrStorage::CfvData() { return cfv_; }
 
 const std::vector<float>& CfrStorage::CfvData() const { return cfv_; }
 
+std::vector<float>& CfrStorage::ReachData() { return reach_; }
+
+const std::vector<float>& CfrStorage::ReachData() const { return reach_; }
+
+int CfrStorage::AllocateReachBlock(int num_hands) {
+  if (num_hands <= 0) {
+    throw std::invalid_argument("CFR reach num_hands must be positive");
+  }
+  const int offset = static_cast<int>(reach_.size());
+  reach_.resize(reach_.size() + static_cast<std::size_t>(num_hands), 0.0f);
+  return offset;
+}
+
+void CfrStorage::InitializeReachLayout(
+    const game::poker::PokerTree& tree,
+    const game::poker::PokerTreeNode& node) {
+  NodeCfrLayout& layout = layouts_[static_cast<std::size_t>(node.node_id)];
+  if (node.parent_node_id < 0) {
+    for (int player = 0; player < game::poker::GameBasic::kNumPlayers;
+         ++player) {
+      layout.reach_offset[static_cast<std::size_t>(player)] =
+          AllocateReachBlock(layout.num_hands);
+    }
+    return;
+  }
+
+  const game::poker::PokerTreeNode& parent = tree.Node(node.parent_node_id);
+  const NodeCfrLayout& parent_layout =
+      layouts_[static_cast<std::size_t>(parent.node_id)];
+  const int parent_actor = parent.node_state->ActorPlayer();
+  const bool parent_is_player =
+      parent_actor >= 0 && parent_actor < game::poker::GameBasic::kNumPlayers;
+  const bool can_share_with_parent =
+      parent_layout.num_hands == layout.num_hands;
+
+  for (int player = 0; player < game::poker::GameBasic::kNumPlayers;
+       ++player) {
+    const std::size_t player_index = static_cast<std::size_t>(player);
+    if (parent_is_player && can_share_with_parent && player != parent_actor) {
+      layout.reach_offset[player_index] =
+          parent_layout.reach_offset[player_index];
+    } else {
+      layout.reach_offset[player_index] = AllocateReachBlock(layout.num_hands);
+    }
+  }
+}
+
 void CfrStorage::ValidateNodeId(int node_id) const {
   if (node_id < 0 || node_id >= static_cast<int>(layouts_.size())) {
     throw std::invalid_argument("CFR storage node id is out of range");
+  }
+}
+
+void CfrStorage::ValidatePlayer(int player) const {
+  if (player < 0 || player >= game::poker::GameBasic::kNumPlayers) {
+    throw std::invalid_argument("CFR storage player is out of range");
   }
 }
 
@@ -160,6 +229,20 @@ int CfrStorage::HandIndex(const NodeCfrLayout& layout, int hand_index) const {
     throw std::invalid_argument("CFR cfv storage offset is invalid");
   }
   return layout.cfv_offset + hand_index;
+}
+
+int CfrStorage::PlayerHandIndex(const NodeCfrLayout& layout, int player,
+                                int hand_index) const {
+  ValidatePlayer(player);
+  if (hand_index < 0 || hand_index >= layout.num_hands) {
+    throw std::invalid_argument("CFR reach hand index is out of range");
+  }
+  const int offset =
+      layout.reach_offset[static_cast<std::size_t>(player)];
+  if (offset < 0) {
+    throw std::invalid_argument("CFR reach storage offset is invalid");
+  }
+  return offset + hand_index;
 }
 
 }  // namespace fisher::algorithm
