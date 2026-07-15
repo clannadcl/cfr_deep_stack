@@ -1,6 +1,7 @@
 #include "game/poker/node_state.h"
 
 #include <algorithm>
+#include <cmath>
 #include <stdexcept>
 #include <utility>
 
@@ -61,6 +62,9 @@ NodeState::NodeState(const Args& args)
       terminal_status_(args.terminal_status),
       action_history_(args.action_history) {
   Validate();
+  if (IsTerminal()) {
+    terminal_payoff_ = BuildTerminalPayoff();
+  }
   valid_actions_ = ActionResolver::Resolve(*this);
 }
 
@@ -100,6 +104,17 @@ TerminalStatus NodeState::Status() const { return terminal_status_; }
 
 bool NodeState::IsTerminal() const {
   return terminal_status_ != TerminalStatus::kNotTerminal;
+}
+
+bool NodeState::HasTerminalPayoff() const {
+  return terminal_payoff_.has_value();
+}
+
+const TerminalPayoff& NodeState::GetTerminalPayoff() const {
+  if (!terminal_payoff_.has_value()) {
+    throw std::invalid_argument("NodeState has no terminal payoff");
+  }
+  return *terminal_payoff_;
 }
 
 const std::vector<Action>& NodeState::ActionHistory() const {
@@ -260,6 +275,36 @@ void NodeState::Validate() const {
       is_fold_[0] == is_fold_[1]) {
     throw std::invalid_argument("Fold terminal requires exactly one fold");
   }
+}
+
+TerminalPayoff NodeState::BuildTerminalPayoff() const {
+  const float matched_current_round =
+      2.0f * std::min(bet_current_round_[0], bet_current_round_[1]);
+  const float contested_pot = pot_ + matched_current_round;
+  const float uncalled_bet =
+      std::fabs(bet_current_round_[0] - bet_current_round_[1]);
+
+  const RakeConfig& rake_config = setup_->BasicGame().Rake();
+  const float rake_ratio = static_cast<float>(rake_config.percentage);
+  const float rake_cap = static_cast<float>(rake_config.cap);
+  const float rake =
+      rake_config.enabled ? std::min(contested_pot * rake_ratio, rake_cap)
+                          : 0.0f;
+  const float half_pot = 0.5f * contested_pot;
+
+  PlayerTerminalPayoff player_payoff;
+  player_payoff.win = half_pot - rake;
+  player_payoff.lose = -half_pot;
+  player_payoff.chop =
+      terminal_status_ == TerminalStatus::kShowdownTerminal ? -0.5f * rake
+                                                            : 0.0f;
+
+  TerminalPayoff payoff;
+  payoff.contested_pot = contested_pot;
+  payoff.rake = rake;
+  payoff.uncalled_bet = uncalled_bet;
+  payoff.players = {player_payoff, player_payoff};
+  return payoff;
 }
 
 int NodeState::OpponentPlayer() const {

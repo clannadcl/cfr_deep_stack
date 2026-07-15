@@ -2,6 +2,7 @@
 
 #include <array>
 #include <memory>
+#include <optional>
 #include <vector>
 
 #include "game/poker/action.h"
@@ -16,6 +17,19 @@ enum class TerminalStatus {
   kNotTerminal = 0,
   kFoldTerminal = 1,
   kShowdownTerminal = 2,
+};
+
+struct PlayerTerminalPayoff {
+  float win = 0.0f;
+  float lose = 0.0f;
+  float chop = 0.0f;
+};
+
+struct TerminalPayoff {
+  float contested_pot = 0.0f;
+  float rake = 0.0f;
+  float uncalled_bet = 0.0f;
+  std::array<PlayerTerminalPayoff, 2> players;
 };
 
 class NodeState {
@@ -63,6 +77,8 @@ class NodeState {
   const std::array<bool, 2>& IsFold() const;
   TerminalStatus Status() const;
   bool IsTerminal() const;
+  bool HasTerminalPayoff() const;
+  const TerminalPayoff& GetTerminalPayoff() const;
   const std::vector<Action>& ActionHistory() const;
   const std::vector<Action>& ValidActions() const;
 
@@ -71,6 +87,7 @@ class NodeState {
 
  private:
   void Validate() const;
+  TerminalPayoff BuildTerminalPayoff() const;
   int OpponentPlayer() const;
 
   std::shared_ptr<const SubgameSetup> setup_;
@@ -85,6 +102,7 @@ class NodeState {
   int num_raises_current_round_;
   std::array<bool, 2> is_fold_;
   TerminalStatus terminal_status_;
+  std::optional<TerminalPayoff> terminal_payoff_;
   std::vector<Action> action_history_;
   std::vector<Action> valid_actions_;
 };

@@ -1,4 +1,5 @@
 #include <array>
+#include <cmath>
 #include <memory>
 #include <stdexcept>
 #include <string>
@@ -16,6 +17,12 @@ namespace {
 
 void Expect(bool condition, const char* message) {
   if (!condition) {
+    throw std::runtime_error(message);
+  }
+}
+
+void ExpectNear(float actual, float expected, const char* message) {
+  if (std::fabs(actual - expected) > 1e-5f) {
     throw std::runtime_error(message);
   }
 }
@@ -52,14 +59,16 @@ std::shared_ptr<fisher::game::poker::SubgameSetup> MakeSetup(
     std::array<float, 2> bet_current_round, int current_player,
     int last_aggressor, int raise_count,
     fisher::game::poker::TreeAbstractedBets abstracted_bets,
-    float min_raise_size = 1.0f) {
+    float min_raise_size = 1.0f,
+    fisher::game::poker::GameBasic game_basic =
+        fisher::game::poker::GameBasic()) {
   using fisher::game::poker::GameBasic;
   using fisher::game::poker::SubgameSetup;
 
   return std::make_shared<SubgameSetup>(SubgameSetup::Args(
       board, pot, stacks, bet_total, bet_current_round, current_player,
       last_aggressor, raise_count, std::vector<fisher::game::poker::Action>{},
-      MatrixBelief(1.0f), abstracted_bets, GameBasic(),
+      MatrixBelief(1.0f), abstracted_bets, std::move(game_basic),
       /*bet_rounding=*/0.1f, min_raise_size));
 }
 
@@ -79,6 +88,7 @@ int main() {
   using fisher::game::poker::PokerCard;
   using fisher::game::poker::PokerCards;
   using fisher::game::poker::PokerRound;
+  using fisher::game::poker::RakeConfig;
   using fisher::game::poker::TerminalStatus;
   using fisher::game::poker::TreeAbstractedBets;
 
@@ -90,6 +100,10 @@ int main() {
   Expect(root.Board().ToString() == "AsKdQh", "root board mismatch");
   Expect(root.Street() == PokerRound::kFlop, "root street mismatch");
   Expect(root.ActorPlayer() == 1, "root actor mismatch");
+  Expect(!root.HasTerminalPayoff(), "non-terminal root should have no payoff");
+  ExpectInvalidArgument(
+      [&] { root.GetTerminalPayoff(); },
+      "non-terminal payoff access should be invalid");
   Expect(root.ValidActions().front() == Action::Check(),
          "check should be first root action");
   Expect(HasAction(root.ValidActions(), Action::Bet(3.3f)),
@@ -148,6 +162,38 @@ int main() {
   Expect(fold_terminal.Status() == TerminalStatus::kFoldTerminal,
          "fold terminal status mismatch");
   Expect(fold_terminal.Pot() == 10.0f, "fold should keep pot unsettled");
+  Expect(fold_terminal.HasTerminalPayoff(),
+         "fold terminal should cache payoff");
+  const auto& fold_payoff = fold_terminal.GetTerminalPayoff();
+  ExpectNear(fold_payoff.contested_pot, 10.0f,
+             "fold payoff should exclude uncalled bet");
+  ExpectNear(fold_payoff.uncalled_bet, 5.0f,
+             "fold payoff uncalled bet mismatch");
+  ExpectNear(fold_payoff.rake, 0.0f, "fold payoff rake mismatch");
+  ExpectNear(fold_payoff.players[0].win, 5.0f,
+             "fold payoff win mismatch");
+  ExpectNear(fold_payoff.players[0].lose, -5.0f,
+             "fold payoff lose mismatch");
+  ExpectNear(fold_payoff.players[0].chop, 0.0f,
+             "fold payoff chop mismatch");
+
+  auto raked_fold_setup = MakeSetup(
+      PokerCards("AsKdQh"), 10.0f, {95.0f, 100.0f}, {5.0f, 0.0f},
+      {5.0f, 0.0f}, 1, 0, 1, MakeBets({{"50%"}}),
+      /*min_raise_size=*/1.0f,
+      fisher::game::poker::GameBasic(RakeConfig{/*enabled=*/true,
+                                                /*percentage=*/0.05,
+                                                /*cap=*/100.0}));
+  NodeState raked_fold_terminal =
+      raked_fold_setup->GetRootNodeState().CommitAction(Action::Fold());
+  const auto& raked_fold_payoff = raked_fold_terminal.GetTerminalPayoff();
+  ExpectNear(raked_fold_payoff.contested_pot, 10.0f,
+             "raked fold contested pot mismatch");
+  ExpectNear(raked_fold_payoff.rake, 0.5f, "raked fold rake mismatch");
+  ExpectNear(raked_fold_payoff.players[0].win, 4.5f,
+             "raked fold win mismatch");
+  ExpectNear(raked_fold_payoff.players[0].lose, -5.0f,
+             "raked fold lose mismatch");
 
   auto river_setup = MakeSetup(
       PokerCards("AsKdQh2c3d"), 20.0f, {80.0f, 80.0f}, {0.0f, 0.0f},
@@ -158,6 +204,40 @@ int main() {
           .CommitAction(Action::Check());
   Expect(river_showdown.Status() == TerminalStatus::kShowdownTerminal,
          "river check-check should showdown");
+  Expect(river_showdown.HasTerminalPayoff(),
+         "river showdown should cache payoff");
+  const auto& river_payoff = river_showdown.GetTerminalPayoff();
+  ExpectNear(river_payoff.contested_pot, 20.0f,
+             "river showdown contested pot mismatch");
+  ExpectNear(river_payoff.players[0].win, 10.0f,
+             "river showdown win mismatch");
+  ExpectNear(river_payoff.players[0].lose, -10.0f,
+             "river showdown lose mismatch");
+  ExpectNear(river_payoff.players[0].chop, 0.0f,
+             "river showdown chop mismatch");
+
+  auto raked_showdown_setup = MakeSetup(
+      PokerCards("AsKdQh2c3d"), 20.0f, {75.0f, 75.0f}, {5.0f, 5.0f},
+      {5.0f, 5.0f}, 0, 1, 1, MakeBets({{"50%"}}),
+      /*min_raise_size=*/1.0f,
+      fisher::game::poker::GameBasic(RakeConfig{/*enabled=*/true,
+                                                /*percentage=*/0.05,
+                                                /*cap=*/100.0}));
+  NodeState raked_showdown =
+      raked_showdown_setup->GetRootNodeState()
+          .CommitAction(Action::Check())
+          .CommitAction(Action::Check());
+  const auto& raked_showdown_payoff = raked_showdown.GetTerminalPayoff();
+  ExpectNear(raked_showdown_payoff.contested_pot, 30.0f,
+             "raked showdown contested pot mismatch");
+  ExpectNear(raked_showdown_payoff.rake, 1.5f,
+             "raked showdown rake mismatch");
+  ExpectNear(raked_showdown_payoff.players[0].win, 13.5f,
+             "raked showdown win mismatch");
+  ExpectNear(raked_showdown_payoff.players[0].lose, -15.0f,
+             "raked showdown lose mismatch");
+  ExpectNear(raked_showdown_payoff.players[0].chop, -0.75f,
+             "raked showdown chop mismatch");
 
   auto short_call_setup = MakeSetup(
       PokerCards("AsKdQh"), 10.0f, {90.0f, 3.0f}, {10.0f, 0.0f},
@@ -168,6 +248,15 @@ int main() {
          "short allin call should showdown immediately");
   Expect(short_call.BetCurrentRound()[1] == 3.0f,
          "short allin call amount mismatch");
+  const auto& short_call_payoff = short_call.GetTerminalPayoff();
+  ExpectNear(short_call_payoff.contested_pot, 16.0f,
+             "short allin payoff should exclude uncalled amount");
+  ExpectNear(short_call_payoff.uncalled_bet, 7.0f,
+             "short allin uncalled amount mismatch");
+  ExpectNear(short_call_payoff.players[0].win, 8.0f,
+             "short allin win mismatch");
+  ExpectNear(short_call_payoff.players[0].lose, -8.0f,
+             "short allin lose mismatch");
 
   auto raise_setup = MakeSetup(
       PokerCards("AsKdQh"), 3.0f, {97.0f, 100.0f}, {3.0f, 0.0f},
