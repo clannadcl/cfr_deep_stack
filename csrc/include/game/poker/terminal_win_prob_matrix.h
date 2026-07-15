@@ -25,17 +25,7 @@ class TerminalWinProbMatrix {
  private:
   void Build(const GameBasic& game_basic, const IsomorphicMapping& mapping,
              const SevenCardLookupTable& evaluator);
-  void AccumulateRawPair(const GameBasic& game_basic,
-                         const SevenCardLookupTable& evaluator,
-                         int hero_raw, int opponent_raw, int hero_iso,
-                         int opponent_iso, float normalization);
   void ValidateIsoIndex(int iso_index) const;
-  std::vector<uint8_t> RemainingDeckForPair(const PokerHand& hero,
-                                            const PokerHand& opponent) const;
-  float RawWinProbability(const SevenCardLookupTable& evaluator,
-                          const PokerHand& hero,
-                          const PokerHand& opponent,
-                          const std::vector<uint8_t>& remaining_deck) const;
 
   PokerCards board_;
   PokerRound round_;
