@@ -22,6 +22,7 @@ add_library(fisher_core STATIC
   csrc/src/game/poker/action.cc
   csrc/src/game/poker/belief.cc
   csrc/src/game/poker/game_basic.cc
+  csrc/src/game/poker/hand_evaluator.cc
   csrc/src/game/poker/isomorphic_mapping.cc
   csrc/src/game/poker/node_state.cc
   csrc/src/game/poker/poker_cards_isomorphic_index.cc
@@ -42,6 +43,11 @@ target_include_directories(fisher_core
 target_compile_options(fisher_core
   PRIVATE
     $<$<CXX_COMPILER_ID:Clang,AppleClang,GNU>:-Wall -Wextra -Wpedantic>
+)
+
+target_compile_definitions(fisher_core
+  PRIVATE
+    FISHER_LOOKUP_CACHE_DIR="${CMAKE_CURRENT_BINARY_DIR}/cache"
 )
 
 if(FISHER_BUILD_TESTS)
@@ -168,6 +174,17 @@ if(FISHER_BUILD_TESTS)
   )
 
   add_test(NAME game_basic_test COMMAND game_basic_test)
+
+  add_executable(hand_evaluator_test
+    csrc/tests/game/poker/hand_evaluator_test.cc
+  )
+
+  target_link_libraries(hand_evaluator_test
+    PRIVATE
+      fisher_core
+  )
+
+  add_test(NAME hand_evaluator_test COMMAND hand_evaluator_test)
 
   add_executable(isomorphic_mapping_test
     csrc/tests/game/poker/isomorphic_mapping_test.cc
