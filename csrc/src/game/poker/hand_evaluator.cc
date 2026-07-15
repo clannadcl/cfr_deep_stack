@@ -221,10 +221,21 @@ hand_index_t SevenCardLookupTable::IsomorphicIndex(
     const PokerCards& cards) const {
   const std::array<uint8_t, PokerHandEvaluator::kSevenCards> ids =
       ToCardIds(cards);
-  return hand_index_last(&indexer_, ids.data());
+  return IsomorphicIndex(ids.data());
+}
+
+hand_index_t SevenCardLookupTable::IsomorphicIndex(
+    const uint8_t cards[PokerHandEvaluator::kSevenCards]) const {
+  ValidateUniqueSevenCards(cards);
+  return hand_index_last(&indexer_, cards);
 }
 
 uint16_t SevenCardLookupTable::Evaluate7(const PokerCards& cards) const {
+  return StrengthByIndex(IsomorphicIndex(cards));
+}
+
+uint16_t SevenCardLookupTable::Evaluate7(
+    const uint8_t cards[PokerHandEvaluator::kSevenCards]) const {
   return StrengthByIndex(IsomorphicIndex(cards));
 }
 

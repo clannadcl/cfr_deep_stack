@@ -23,6 +23,7 @@ add_library(fisher_core STATIC
   csrc/src/game/poker/belief.cc
   csrc/src/game/poker/game_basic.cc
   csrc/src/game/poker/hand_evaluator.cc
+  csrc/src/game/poker/terminal_win_prob_matrix.cc
   csrc/src/game/poker/isomorphic_mapping.cc
   csrc/src/game/poker/node_state.cc
   csrc/src/game/poker/poker_cards_isomorphic_index.cc
@@ -185,6 +186,18 @@ if(FISHER_BUILD_TESTS)
   )
 
   add_test(NAME hand_evaluator_test COMMAND hand_evaluator_test)
+
+  add_executable(terminal_win_prob_matrix_test
+    csrc/tests/game/poker/terminal_win_prob_matrix_test.cc
+  )
+
+  target_link_libraries(terminal_win_prob_matrix_test
+    PRIVATE
+      fisher_core
+  )
+
+  add_test(NAME terminal_win_prob_matrix_test
+           COMMAND terminal_win_prob_matrix_test)
 
   add_executable(isomorphic_mapping_test
     csrc/tests/game/poker/isomorphic_mapping_test.cc

@@ -37,7 +37,11 @@ class SevenCardLookupTable {
   hand_index_t Size() const;
   uint16_t NumStrengths() const;
   hand_index_t IsomorphicIndex(const PokerCards& cards) const;
+  hand_index_t IsomorphicIndex(
+      const uint8_t cards[PokerHandEvaluator::kSevenCards]) const;
   uint16_t Evaluate7(const PokerCards& cards) const;
+  uint16_t Evaluate7(
+      const uint8_t cards[PokerHandEvaluator::kSevenCards]) const;
   uint16_t StrengthByIndex(hand_index_t index) const;
   const std::vector<uint16_t>& StrengthTable() const;
 
