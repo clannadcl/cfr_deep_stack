@@ -33,6 +33,14 @@ IsoTransition BuildIsoTransition(
 
 class PokerCfrSolver {
  public:
+  struct HeroPassProfile {
+    double initialize_root_reach_ms = 0.0;
+    double forward_reach_ms = 0.0;
+    double terminal_cfv_ms = 0.0;
+    double backward_update_ms = 0.0;
+    double total_ms = 0.0;
+  };
+
   struct Args {
     explicit Args(std::shared_ptr<game::poker::SubgameSetup> setup);
 
@@ -43,6 +51,7 @@ class PokerCfrSolver {
 
   void RunIteration();
   void RunHeroPass(int hero_player);
+  HeroPassProfile RunHeroPassProfiled(int hero_player);
 
   std::vector<float> CurrentStrategyData() const;
   std::vector<float> AverageStrategyData(float epsilon = 1e-12f) const;

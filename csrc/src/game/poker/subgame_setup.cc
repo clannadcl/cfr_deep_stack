@@ -58,10 +58,10 @@ SubgameSetup::SubgameSetup(const Args& args)
     : board_(args.board),
       game_basic_(args.game_basic),
       street_(game_basic_.BoardRound(board_)),
-      pot_(args.pot),
-      stacks_(args.stacks),
-      bet_total_(args.bet_total),
-      bet_current_round_(args.bet_current_round),
+      pot_(MoneyToMilliBb(args.pot)),
+      stacks_(MoneyArrayToMilliBb(args.stacks)),
+      bet_total_(MoneyArrayToMilliBb(args.bet_total)),
+      bet_current_round_(MoneyArrayToMilliBb(args.bet_current_round)),
       current_player_(args.current_player),
       last_aggressor_(args.last_aggressor),
       raise_count_(args.raise_count),
@@ -70,22 +70,22 @@ SubgameSetup::SubgameSetup(const Args& args)
       bet_rounding_(args.bet_rounding),
       min_raise_size_(args.min_raise_size),
       root_belief_(BuildRootBelief(args.root_belief, board_, game_basic_)) {
-  if (pot_ < 0.0f) {
+  if (pot_ < 0) {
     throw std::invalid_argument("Pot cannot be negative");
   }
-  for (float stack : stacks_) {
-    if (stack < 0.0f) {
+  for (MoneyMilliBb stack : stacks_) {
+    if (stack < 0) {
       throw std::invalid_argument("Stack cannot be negative");
     }
   }
-  for (float bet : bet_current_round_) {
-    if (bet < 0.0f) {
+  for (MoneyMilliBb bet : bet_current_round_) {
+    if (bet < 0) {
       throw std::invalid_argument("Current-round bet cannot be negative");
     }
   }
   for (int player = 0; player < GameBasic::kNumPlayers; ++player) {
     const std::size_t index = static_cast<std::size_t>(player);
-    if (bet_total_[index] < 0.0f) {
+    if (bet_total_[index] < 0) {
       throw std::invalid_argument("Total bet cannot be negative");
     }
     if (bet_total_[index] < bet_current_round_[index]) {
@@ -112,16 +112,18 @@ const PokerCards& SubgameSetup::Board() const { return board_; }
 
 PokerRound SubgameSetup::Street() const { return street_; }
 
-float SubgameSetup::Pot() const { return pot_; }
+float SubgameSetup::Pot() const { return MilliBbToMoney(pot_); }
 
-const std::array<float, 2>& SubgameSetup::Stacks() const { return stacks_; }
-
-const std::array<float, 2>& SubgameSetup::BetTotal() const {
-  return bet_total_;
+std::array<float, 2> SubgameSetup::Stacks() const {
+  return MilliBbArrayToMoney(stacks_);
 }
 
-const std::array<float, 2>& SubgameSetup::BetCurrentRound() const {
-  return bet_current_round_;
+std::array<float, 2> SubgameSetup::BetTotal() const {
+  return MilliBbArrayToMoney(bet_total_);
+}
+
+std::array<float, 2> SubgameSetup::BetCurrentRound() const {
+  return MilliBbArrayToMoney(bet_current_round_);
 }
 
 int SubgameSetup::CurrentPlayer() const { return current_player_; }
@@ -148,8 +150,8 @@ float SubgameSetup::MinRaiseSize() const { return min_raise_size_; }
 
 NodeState SubgameSetup::GetRootNodeState() const {
   return NodeState(NodeState::Args(
-      shared_from_this(), board_, pot_, stacks_, bet_total_,
-      bet_current_round_, current_player_, last_aggressor_, raise_count_,
+      shared_from_this(), board_, Pot(), Stacks(), BetTotal(),
+      BetCurrentRound(), current_player_, last_aggressor_, raise_count_,
       std::array<bool, 2>{false, false}, TerminalStatus::kNotTerminal,
       root_action_history_));
 }

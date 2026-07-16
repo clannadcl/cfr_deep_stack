@@ -51,10 +51,10 @@ NodeState::NodeState(const Args& args)
     : setup_(args.setup),
       board_(args.board),
       street_(RoundFromBoardSize(board_.Size())),
-      pot_(args.pot),
-      stacks_(args.stacks),
-      bet_total_(args.bet_total),
-      bet_current_round_(args.bet_current_round),
+      pot_(MoneyToMilliBb(args.pot)),
+      stacks_(MoneyArrayToMilliBb(args.stacks)),
+      bet_total_(MoneyArrayToMilliBb(args.bet_total)),
+      bet_current_round_(MoneyArrayToMilliBb(args.bet_current_round)),
       actor_player_(args.actor_player),
       last_aggressor_(args.last_aggressor),
       num_raises_current_round_(args.num_raises_current_round),
@@ -76,16 +76,18 @@ const PokerCards& NodeState::Board() const { return board_; }
 
 PokerRound NodeState::Street() const { return street_; }
 
-float NodeState::Pot() const { return pot_; }
+float NodeState::Pot() const { return MilliBbToMoney(pot_); }
 
-const std::array<float, 2>& NodeState::Stacks() const { return stacks_; }
-
-const std::array<float, 2>& NodeState::BetTotal() const {
-  return bet_total_;
+std::array<float, 2> NodeState::Stacks() const {
+  return MilliBbArrayToMoney(stacks_);
 }
 
-const std::array<float, 2>& NodeState::BetCurrentRound() const {
-  return bet_current_round_;
+std::array<float, 2> NodeState::BetTotal() const {
+  return MilliBbArrayToMoney(bet_total_);
+}
+
+std::array<float, 2> NodeState::BetCurrentRound() const {
+  return MilliBbArrayToMoney(bet_current_round_);
 }
 
 int NodeState::ActorPlayer() const { return actor_player_; }
@@ -137,9 +139,9 @@ NodeState NodeState::CommitAction(const Action& action) const {
     throw std::invalid_argument("Action is not valid for this node");
   }
 
-  std::array<float, 2> stacks = stacks_;
-  std::array<float, 2> bet_total = bet_total_;
-  std::array<float, 2> bet_current_round = bet_current_round_;
+  std::array<MoneyMilliBb, 2> stacks = stacks_;
+  std::array<MoneyMilliBb, 2> bet_total = bet_total_;
+  std::array<MoneyMilliBb, 2> bet_current_round = bet_current_round_;
   std::array<bool, 2> is_fold = is_fold_;
   std::vector<Action> action_history = action_history_;
   action_history.push_back(action);
@@ -165,15 +167,15 @@ NodeState NodeState::CommitAction(const Action& action) const {
       next_actor = kChancePlayer;
     }
   } else if (action.IsCall()) {
-    const float to_call =
+    const MoneyMilliBb to_call =
         bet_current_round[static_cast<std::size_t>(opponent)] -
         bet_current_round[static_cast<std::size_t>(actor)];
-    const float call_amount =
+    const MoneyMilliBb call_amount =
         std::min(to_call, stacks[static_cast<std::size_t>(actor)]);
     stacks[static_cast<std::size_t>(actor)] -= call_amount;
     bet_current_round[static_cast<std::size_t>(actor)] += call_amount;
     bet_total[static_cast<std::size_t>(actor)] += call_amount;
-    if (stacks[0] == 0.0f || stacks[1] == 0.0f ||
+    if (stacks[0] == 0 || stacks[1] == 0 ||
         street_ == PokerRound::kRiver) {
       next_actor = kTerminalPlayer;
       next_status = TerminalStatus::kShowdownTerminal;
@@ -181,10 +183,11 @@ NodeState NodeState::CommitAction(const Action& action) const {
       next_actor = kChancePlayer;
     }
   } else if (action.IsBet()) {
-    const float target = action.Amount();
-    const float current_bet = bet_current_round[static_cast<std::size_t>(actor)];
-    const float delta = target - current_bet;
-    if (delta <= 0.0f || delta > stacks[static_cast<std::size_t>(actor)]) {
+    const MoneyMilliBb target = action.AmountInInt();
+    const MoneyMilliBb current_bet =
+        bet_current_round[static_cast<std::size_t>(actor)];
+    const MoneyMilliBb delta = target - current_bet;
+    if (delta <= 0 || delta > stacks[static_cast<std::size_t>(actor)]) {
       throw std::invalid_argument("Invalid bet action amount");
     }
     stacks[static_cast<std::size_t>(actor)] -= delta;
@@ -197,10 +200,11 @@ NodeState NodeState::CommitAction(const Action& action) const {
     throw std::invalid_argument("Unsupported action type");
   }
 
-  return NodeState(Args(setup_, board_, pot_, stacks, bet_total,
-                        bet_current_round, next_actor, next_last_aggressor,
-                        next_num_raises, is_fold, next_status,
-                        action_history));
+  return NodeState(Args(setup_, board_, Pot(), MilliBbArrayToMoney(stacks),
+                        MilliBbArrayToMoney(bet_total),
+                        MilliBbArrayToMoney(bet_current_round), next_actor,
+                        next_last_aggressor, next_num_raises, is_fold,
+                        next_status, action_history));
 }
 
 NodeState NodeState::CommitChanceAction(PokerCard card) const {
@@ -218,10 +222,11 @@ NodeState NodeState::CommitChanceAction(PokerCard card) const {
   next_board.Add(card);
   std::vector<Action> action_history = action_history_;
   action_history.push_back(Action::Chance());
-  const float next_pot = pot_ + bet_current_round_[0] + bet_current_round_[1];
+  const MoneyMilliBb next_pot =
+      pot_ + bet_current_round_[0] + bet_current_round_[1];
 
   return NodeState(Args(
-      setup_, next_board, next_pot, stacks_, bet_total_,
+      setup_, next_board, MilliBbToMoney(next_pot), Stacks(), BetTotal(),
       std::array<float, 2>{0.0f, 0.0f}, /*actor_player=*/0, last_aggressor_,
       /*num_raises_current_round=*/0, is_fold_,
       TerminalStatus::kNotTerminal, action_history));
@@ -234,18 +239,18 @@ void NodeState::Validate() const {
   if (!IsPostflopRound(street_)) {
     throw std::invalid_argument("NodeState only supports postflop boards");
   }
-  if (pot_ < 0.0f) {
+  if (pot_ < 0) {
     throw std::invalid_argument("NodeState pot cannot be negative");
   }
   for (int player = 0; player < GameBasic::kNumPlayers; ++player) {
     const std::size_t index = static_cast<std::size_t>(player);
-    if (stacks_[index] < 0.0f) {
+    if (stacks_[index] < 0) {
       throw std::invalid_argument("NodeState stack cannot be negative");
     }
-    if (bet_total_[index] < 0.0f) {
+    if (bet_total_[index] < 0) {
       throw std::invalid_argument("NodeState total bet cannot be negative");
     }
-    if (bet_current_round_[index] < 0.0f) {
+    if (bet_current_round_[index] < 0) {
       throw std::invalid_argument(
           "NodeState current-round bet cannot be negative");
     }
@@ -278,11 +283,11 @@ void NodeState::Validate() const {
 }
 
 TerminalPayoff NodeState::BuildTerminalPayoff() const {
-  const float matched_current_round =
-      2.0f * std::min(bet_current_round_[0], bet_current_round_[1]);
-  const float contested_pot = pot_ + matched_current_round;
-  const float uncalled_bet =
-      std::fabs(bet_current_round_[0] - bet_current_round_[1]);
+  const MoneyMilliBb matched_current_round =
+      2 * std::min(bet_current_round_[0], bet_current_round_[1]);
+  const float contested_pot = MilliBbToMoney(pot_ + matched_current_round);
+  const float uncalled_bet = MilliBbToMoney(
+      std::llabs(bet_current_round_[0] - bet_current_round_[1]));
 
   const RakeConfig& rake_config = setup_->BasicGame().Rake();
   const float rake_ratio = static_cast<float>(rake_config.percentage);

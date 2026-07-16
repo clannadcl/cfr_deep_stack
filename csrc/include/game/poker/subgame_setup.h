@@ -8,6 +8,7 @@
 #include "game/poker/action.h"
 #include "game/poker/belief.h"
 #include "game/poker/game_basic.h"
+#include "game/poker/money.h"
 #include "game/poker/poker_cards.h"
 #include "game/poker/poker_cards_isomorphic_index.h"
 #include "game/poker/tree_abstracted_bets.h"
@@ -52,9 +53,9 @@ class SubgameSetup : public std::enable_shared_from_this<SubgameSetup> {
   const PokerCards& Board() const;
   PokerRound Street() const;
   float Pot() const;
-  const std::array<float, 2>& Stacks() const;
-  const std::array<float, 2>& BetTotal() const;
-  const std::array<float, 2>& BetCurrentRound() const;
+  std::array<float, 2> Stacks() const;
+  std::array<float, 2> BetTotal() const;
+  std::array<float, 2> BetCurrentRound() const;
   int CurrentPlayer() const;
   int LastAggressor() const;
   int RaiseCount() const;
@@ -74,10 +75,10 @@ class SubgameSetup : public std::enable_shared_from_this<SubgameSetup> {
   PokerCards board_;
   GameBasic game_basic_;
   PokerRound street_;
-  float pot_;
-  std::array<float, 2> stacks_;
-  std::array<float, 2> bet_total_;
-  std::array<float, 2> bet_current_round_;
+  MoneyMilliBb pot_;
+  std::array<MoneyMilliBb, 2> stacks_;
+  std::array<MoneyMilliBb, 2> bet_total_;
+  std::array<MoneyMilliBb, 2> bet_current_round_;
   int current_player_;
   int last_aggressor_;
   int raise_count_;

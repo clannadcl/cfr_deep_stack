@@ -1,6 +1,7 @@
 #include "algorithm/poker_cfr_solver.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cstddef>
 #include <stdexcept>
 #include <unordered_map>
@@ -114,11 +115,43 @@ void PokerCfrSolver::RunIteration() {
 }
 
 void PokerCfrSolver::RunHeroPass(int hero_player) {
+  RunHeroPassProfiled(hero_player);
+}
+
+PokerCfrSolver::HeroPassProfile PokerCfrSolver::RunHeroPassProfiled(
+    int hero_player) {
+  using Clock = std::chrono::steady_clock;
+  auto elapsed_ms = [](Clock::time_point begin, Clock::time_point end) {
+    return std::chrono::duration<double, std::milli>(end - begin).count();
+  };
+
   ValidatePlayer(hero_player);
+  const auto total_begin = Clock::now();
+
+  const auto initialize_begin = Clock::now();
   InitializeRootReach();
+  const auto initialize_end = Clock::now();
+
+  const auto forward_begin = Clock::now();
   ForwardReachAndAccumulateAverage(hero_player);
+  const auto forward_end = Clock::now();
+
+  const auto terminal_begin = Clock::now();
   ComputeTerminalCfvs();
+  const auto terminal_end = Clock::now();
+
+  const auto backward_begin = Clock::now();
   BackwardAndUpdate(hero_player);
+  const auto backward_end = Clock::now();
+
+  HeroPassProfile profile;
+  profile.initialize_root_reach_ms =
+      elapsed_ms(initialize_begin, initialize_end);
+  profile.forward_reach_ms = elapsed_ms(forward_begin, forward_end);
+  profile.terminal_cfv_ms = elapsed_ms(terminal_begin, terminal_end);
+  profile.backward_update_ms = elapsed_ms(backward_begin, backward_end);
+  profile.total_ms = elapsed_ms(total_begin, backward_end);
+  return profile;
 }
 
 std::vector<float> PokerCfrSolver::CurrentStrategyData() const {

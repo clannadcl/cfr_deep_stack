@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "game/poker/action.h"
+#include "game/poker/money.h"
 #include "game/poker/poker_cards.h"
 #include "game/poker/poker_cards_isomorphic_index.h"
 
@@ -67,9 +68,9 @@ class NodeState {
   const PokerCards& Board() const;
   PokerRound Street() const;
   float Pot() const;
-  const std::array<float, 2>& Stacks() const;
-  const std::array<float, 2>& BetTotal() const;
-  const std::array<float, 2>& BetCurrentRound() const;
+  std::array<float, 2> Stacks() const;
+  std::array<float, 2> BetTotal() const;
+  std::array<float, 2> BetCurrentRound() const;
   int ActorPlayer() const;
   int LastAggressor() const;
   int NumRaisesCurrentRound() const;
@@ -93,10 +94,10 @@ class NodeState {
   std::shared_ptr<const SubgameSetup> setup_;
   PokerCards board_;
   PokerRound street_;
-  float pot_;
-  std::array<float, 2> stacks_;
-  std::array<float, 2> bet_total_;
-  std::array<float, 2> bet_current_round_;
+  MoneyMilliBb pot_;
+  std::array<MoneyMilliBb, 2> stacks_;
+  std::array<MoneyMilliBb, 2> bet_total_;
+  std::array<MoneyMilliBb, 2> bet_current_round_;
   int actor_player_;
   int last_aggressor_;
   int num_raises_current_round_;

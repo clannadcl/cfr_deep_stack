@@ -138,6 +138,23 @@ if(FISHER_BUILD_TESTS)
 
   add_test(NAME poker_cfr_solver_test COMMAND poker_cfr_solver_test)
 
+  add_executable(realistic_spot_regression_test
+    csrc/tests/algorithm/realistic_spot_regression_test.cc
+  )
+
+  target_link_libraries(realistic_spot_regression_test
+    PRIVATE
+      fisher_core
+  )
+
+  target_compile_definitions(realistic_spot_regression_test
+    PRIVATE
+      FISHER_TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/csrc/tests/algorithm/data"
+  )
+
+  add_test(NAME realistic_spot_regression_test
+           COMMAND realistic_spot_regression_test)
+
   add_executable(action_test
     csrc/tests/game/poker/action_test.cc
   )

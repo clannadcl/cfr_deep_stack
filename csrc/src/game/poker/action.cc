@@ -1,23 +1,10 @@
 #include "game/poker/action.h"
 
-#include <cmath>
 #include <sstream>
 #include <stdexcept>
 #include <string>
 
 namespace fisher::game::poker {
-namespace {
-
-constexpr float kActionAmountScale = 1000.0f;
-
-int AmountToInt(float amount) {
-  if (amount < 0.0f) {
-    throw std::invalid_argument("Action amount cannot be negative");
-  }
-  return static_cast<int>(std::round(amount * kActionAmountScale));
-}
-
-}  // namespace
 
 Action Action::Fold() { return Action(ActionType::kFold, 0); }
 
@@ -26,7 +13,10 @@ Action Action::Check() { return Action(ActionType::kCheck, 0); }
 Action Action::Call() { return Action(ActionType::kCall, 0); }
 
 Action Action::Bet(float amount) {
-  return Action(ActionType::kBet, AmountToInt(amount));
+  if (amount < 0.0f) {
+    throw std::invalid_argument("Action amount cannot be negative");
+  }
+  return Action(ActionType::kBet, MoneyToMilliBb(amount));
 }
 
 Action Action::Chance() { return Action(ActionType::kChance, 0); }
@@ -34,10 +24,10 @@ Action Action::Chance() { return Action(ActionType::kChance, 0); }
 ActionType Action::Type() const { return type_; }
 
 float Action::Amount() const {
-  return static_cast<float>(amount_in_int_) / kActionAmountScale;
+  return MilliBbToMoney(amount_in_int_);
 }
 
-int Action::AmountInInt() const { return amount_in_int_; }
+MoneyMilliBb Action::AmountInInt() const { return amount_in_int_; }
 
 std::string Action::TypeString() const {
   switch (type_) {
@@ -88,7 +78,7 @@ bool Action::operator<(const Action& other) const {
   return amount_in_int_ < other.amount_in_int_;
 }
 
-Action::Action(ActionType type, int amount_in_int)
+Action::Action(ActionType type, MoneyMilliBb amount_in_int)
     : type_(type), amount_in_int_(amount_in_int) {}
 
 }  // namespace fisher::game::poker

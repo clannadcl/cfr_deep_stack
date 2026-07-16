@@ -2,6 +2,8 @@
 
 #include <string>
 
+#include "game/poker/money.h"
+
 namespace fisher::game::poker {
 
 enum class ActionType {
@@ -22,7 +24,7 @@ class Action {
 
   ActionType Type() const;
   float Amount() const;
-  int AmountInInt() const;
+  MoneyMilliBb AmountInInt() const;
   std::string TypeString() const;
   std::string ToString() const;
 
@@ -37,10 +39,10 @@ class Action {
   bool operator<(const Action& other) const;
 
  private:
-  Action(ActionType type, int amount_in_int);
+  Action(ActionType type, MoneyMilliBb amount_in_int);
 
   ActionType type_;
-  int amount_in_int_;
+  MoneyMilliBb amount_in_int_;
 };
 
 }  // namespace fisher::game::poker
