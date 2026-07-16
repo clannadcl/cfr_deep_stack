@@ -3,6 +3,7 @@
 #include <array>
 #include <vector>
 
+#include "game/poker/isomorphic_mapping.h"
 #include "game/poker/poker_tree.h"
 
 namespace fisher::algorithm {
@@ -12,13 +13,15 @@ struct NodeCfrLayout {
   int regret_offset = -1;
   int cfv_offset = -1;
   std::array<int, 2> reach_offset = {-1, -1};
+  int sum_strategy_offset = -1;
   int num_actions = 0;
   int num_hands = 0;
 };
 
 class CfrStorage {
  public:
-  explicit CfrStorage(const game::poker::PokerTree& tree);
+  CfrStorage(const game::poker::PokerTree& tree,
+             game::poker::IsomorphicMappingTable* mapping_table);
 
   int NumNodes() const;
   int NumHands(int node_id) const;
@@ -32,8 +35,13 @@ class CfrStorage {
   const float& RegretAt(int node_id, int action_index, int hand_index) const;
   float& CfvAt(int node_id, int hand_index);
   const float& CfvAt(int node_id, int hand_index) const;
+  float& CfvAt(int node_id, int player, int hand_index);
+  const float& CfvAt(int node_id, int player, int hand_index) const;
   float& ReachAt(int node_id, int player, int hand_index);
   const float& ReachAt(int node_id, int player, int hand_index) const;
+  float& SumStrategyAt(int node_id, int action_index, int hand_index);
+  const float& SumStrategyAt(int node_id, int action_index,
+                             int hand_index) const;
 
   std::vector<float>& StrategyData();
   const std::vector<float>& StrategyData() const;
@@ -43,6 +51,8 @@ class CfrStorage {
   const std::vector<float>& CfvData() const;
   std::vector<float>& ReachData();
   const std::vector<float>& ReachData() const;
+  std::vector<float>& SumStrategyData();
+  const std::vector<float>& SumStrategyData() const;
 
  private:
   int AllocateReachBlock(int num_hands);
@@ -53,6 +63,8 @@ class CfrStorage {
   int ActionHandIndex(const NodeCfrLayout& layout, int action_index,
                       int hand_index, const char* storage_name) const;
   int HandIndex(const NodeCfrLayout& layout, int hand_index) const;
+  int PlayerHandIndex(const NodeCfrLayout& layout, int player, int hand_index,
+                      int offset, const char* storage_name) const;
   int PlayerHandIndex(const NodeCfrLayout& layout, int player,
                       int hand_index) const;
 
@@ -61,6 +73,7 @@ class CfrStorage {
   std::vector<float> regret_;
   std::vector<float> cfv_;
   std::vector<float> reach_;
+  std::vector<float> sum_strategy_;
 };
 
 }  // namespace fisher::algorithm

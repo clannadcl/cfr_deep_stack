@@ -17,6 +17,7 @@ add_library(fisher_core STATIC
   csrc/src/algorithm/cfr.cc
   csrc/src/algorithm/cfr_storage.cc
   csrc/src/algorithm/data_propagation.cc
+  csrc/src/algorithm/poker_cfr_solver.cc
   csrc/src/game/kuhn.cc
   csrc/src/game/poker/abstracted_action.cc
   csrc/src/game/poker/action_resolver.cc
@@ -125,6 +126,17 @@ if(FISHER_BUILD_TESTS)
   )
 
   add_test(NAME data_propagation_test COMMAND data_propagation_test)
+
+  add_executable(poker_cfr_solver_test
+    csrc/tests/algorithm/poker_cfr_solver_test.cc
+  )
+
+  target_link_libraries(poker_cfr_solver_test
+    PRIVATE
+      fisher_core
+  )
+
+  add_test(NAME poker_cfr_solver_test COMMAND poker_cfr_solver_test)
 
   add_executable(action_test
     csrc/tests/game/poker/action_test.cc

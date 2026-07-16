@@ -15,16 +15,24 @@ bool IsPlayerNode(const game::poker::PokerTreeNode& node) {
 
 }  // namespace
 
-CfrStorage::CfrStorage(const game::poker::PokerTree& tree) {
+CfrStorage::CfrStorage(const game::poker::PokerTree& tree,
+                       game::poker::IsomorphicMappingTable* mapping_table) {
+  if (mapping_table == nullptr) {
+    throw std::invalid_argument("CFR storage mapping table cannot be null");
+  }
   layouts_.resize(static_cast<std::size_t>(tree.NumNodes()));
   for (const game::poker::PokerTreeNode& node : tree.Nodes()) {
     NodeCfrLayout& layout = layouts_[static_cast<std::size_t>(node.node_id)];
-    layout.num_hands = node.node_state->NumHands();
+    layout.num_hands =
+        mapping_table->Get(node.node_state->Board()).NumIsoHands();
     if (layout.num_hands <= 0) {
       throw std::invalid_argument("CFR storage node num_hands must be positive");
     }
     layout.cfv_offset = static_cast<int>(cfv_.size());
-    cfv_.resize(cfv_.size() + static_cast<std::size_t>(layout.num_hands),
+    cfv_.resize(cfv_.size() +
+                    static_cast<std::size_t>(
+                        game::poker::GameBasic::kNumPlayers *
+                        layout.num_hands),
                 0.0f);
     InitializeReachLayout(tree, node);
 
@@ -47,10 +55,14 @@ CfrStorage::CfrStorage(const game::poker::PokerTree& tree) {
     layout.strategy_offset = static_cast<int>(strategy_.size());
     strategy_.resize(strategy_.size() +
                          static_cast<std::size_t>(action_hand_size),
-                     0.0f);
+                     1.0f / static_cast<float>(layout.num_actions));
     layout.regret_offset = static_cast<int>(regret_.size());
     regret_.resize(regret_.size() + static_cast<std::size_t>(action_hand_size),
                    0.0f);
+    layout.sum_strategy_offset = static_cast<int>(sum_strategy_.size());
+    sum_strategy_.resize(sum_strategy_.size() +
+                             static_cast<std::size_t>(action_hand_size),
+                         0.0f);
   }
 }
 
@@ -99,19 +111,44 @@ const float& CfrStorage::RegretAt(int node_id, int action_index,
 }
 
 float& CfrStorage::CfvAt(int node_id, int hand_index) {
-  const NodeCfrLayout& layout = Layout(node_id);
-  return cfv_[static_cast<std::size_t>(HandIndex(layout, hand_index))];
+  return CfvAt(node_id, 0, hand_index);
 }
 
 const float& CfrStorage::CfvAt(int node_id, int hand_index) const {
+  return CfvAt(node_id, 0, hand_index);
+}
+
+float& CfrStorage::CfvAt(int node_id, int player, int hand_index) {
   const NodeCfrLayout& layout = Layout(node_id);
-  return cfv_[static_cast<std::size_t>(HandIndex(layout, hand_index))];
+  return cfv_[static_cast<std::size_t>(
+      PlayerHandIndex(layout, player, hand_index, layout.cfv_offset, "cfv"))];
+}
+
+const float& CfrStorage::CfvAt(int node_id, int player,
+                               int hand_index) const {
+  const NodeCfrLayout& layout = Layout(node_id);
+  return cfv_[static_cast<std::size_t>(
+      PlayerHandIndex(layout, player, hand_index, layout.cfv_offset, "cfv"))];
 }
 
 float& CfrStorage::ReachAt(int node_id, int player, int hand_index) {
   const NodeCfrLayout& layout = Layout(node_id);
   return reach_[static_cast<std::size_t>(
       PlayerHandIndex(layout, player, hand_index))];
+}
+
+float& CfrStorage::SumStrategyAt(int node_id, int action_index,
+                                 int hand_index) {
+  const NodeCfrLayout& layout = Layout(node_id);
+  return sum_strategy_[static_cast<std::size_t>(
+      ActionHandIndex(layout, action_index, hand_index, "sum_strategy"))];
+}
+
+const float& CfrStorage::SumStrategyAt(int node_id, int action_index,
+                                       int hand_index) const {
+  const NodeCfrLayout& layout = Layout(node_id);
+  return sum_strategy_[static_cast<std::size_t>(
+      ActionHandIndex(layout, action_index, hand_index, "sum_strategy"))];
 }
 
 const float& CfrStorage::ReachAt(int node_id, int player,
@@ -138,6 +175,12 @@ const std::vector<float>& CfrStorage::CfvData() const { return cfv_; }
 std::vector<float>& CfrStorage::ReachData() { return reach_; }
 
 const std::vector<float>& CfrStorage::ReachData() const { return reach_; }
+
+std::vector<float>& CfrStorage::SumStrategyData() { return sum_strategy_; }
+
+const std::vector<float>& CfrStorage::SumStrategyData() const {
+  return sum_strategy_;
+}
 
 int CfrStorage::AllocateReachBlock(int num_hands) {
   if (num_hands <= 0) {
@@ -212,8 +255,10 @@ int CfrStorage::ActionHandIndex(const NodeCfrLayout& layout, int action_index,
   }
 
   const int offset =
-      storage_name == std::string("strategy") ? layout.strategy_offset
-                                               : layout.regret_offset;
+      storage_name == std::string("strategy")
+          ? layout.strategy_offset
+          : (storage_name == std::string("regret") ? layout.regret_offset
+                                                   : layout.sum_strategy_offset);
   if (offset < 0) {
     throw std::invalid_argument(
         std::string("CFR ") + storage_name + " storage offset is invalid");
@@ -229,6 +274,21 @@ int CfrStorage::HandIndex(const NodeCfrLayout& layout, int hand_index) const {
     throw std::invalid_argument("CFR cfv storage offset is invalid");
   }
   return layout.cfv_offset + hand_index;
+}
+
+int CfrStorage::PlayerHandIndex(const NodeCfrLayout& layout, int player,
+                                int hand_index, int offset,
+                                const char* storage_name) const {
+  ValidatePlayer(player);
+  if (hand_index < 0 || hand_index >= layout.num_hands) {
+    throw std::invalid_argument(std::string("CFR ") + storage_name +
+                                " hand index is out of range");
+  }
+  if (offset < 0) {
+    throw std::invalid_argument(std::string("CFR ") + storage_name +
+                                " storage offset is invalid");
+  }
+  return offset + player * layout.num_hands + hand_index;
 }
 
 int CfrStorage::PlayerHandIndex(const NodeCfrLayout& layout, int player,
