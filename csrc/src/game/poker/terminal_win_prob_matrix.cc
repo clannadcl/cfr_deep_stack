@@ -165,6 +165,7 @@ TerminalWinProbMatrix::TerminalWinProbMatrix(
   win_prob_.assign(static_cast<std::size_t>(num_iso_hands_ * num_iso_hands_),
                    0.0f);
   Build(game_basic, mapping, evaluator);
+  BuildEquityDelta();
 }
 
 int TerminalWinProbMatrix::NumIsoHands() const { return num_iso_hands_; }
@@ -181,13 +182,20 @@ float TerminalWinProbMatrix::LoseProb(int hero_iso, int opponent_iso) const {
 }
 
 float TerminalWinProbMatrix::EquityDelta(int hero_iso, int opponent_iso) const {
-  return WinProb(hero_iso, opponent_iso) - LoseProb(hero_iso, opponent_iso);
+  ValidateIsoIndex(hero_iso);
+  ValidateIsoIndex(opponent_iso);
+  return equity_delta_[static_cast<std::size_t>(hero_iso * num_iso_hands_ +
+                                               opponent_iso)];
 }
 
 const PokerCards& TerminalWinProbMatrix::Board() const { return board_; }
 
 const std::vector<float>& TerminalWinProbMatrix::WinProbData() const {
   return win_prob_;
+}
+
+const std::vector<float>& TerminalWinProbMatrix::EquityDeltaData() const {
+  return equity_delta_;
 }
 
 void TerminalWinProbMatrix::Build(
@@ -282,6 +290,20 @@ void TerminalWinProbMatrix::Build(
                                         opponent.iso_index)] +=
           (static_cast<float>(wins) / static_cast<float>(runouts)) *
           hero.normalization * opponent.normalization;
+    }
+  }
+}
+
+void TerminalWinProbMatrix::BuildEquityDelta() {
+  equity_delta_.assign(
+      static_cast<std::size_t>(num_iso_hands_ * num_iso_hands_), 0.0f);
+  for (int hero_iso = 0; hero_iso < num_iso_hands_; ++hero_iso) {
+    for (int opponent_iso = 0; opponent_iso < num_iso_hands_; ++opponent_iso) {
+      const std::size_t index =
+          static_cast<std::size_t>(hero_iso * num_iso_hands_ + opponent_iso);
+      const std::size_t transpose_index =
+          static_cast<std::size_t>(opponent_iso * num_iso_hands_ + hero_iso);
+      equity_delta_[index] = win_prob_[index] - win_prob_[transpose_index];
     }
   }
 }

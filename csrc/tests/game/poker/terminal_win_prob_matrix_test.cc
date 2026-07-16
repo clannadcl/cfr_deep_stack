@@ -87,6 +87,10 @@ int main() {
                "KK vs QQ delta should ignore chop runouts");
     ExpectNear(matrix.EquityDelta(queens, kings), -kKingOverQueenWin,
                "equity delta should be antisymmetric");
+    ExpectNear(matrix.EquityDeltaData()[static_cast<std::size_t>(
+                   kings * matrix.NumIsoHands() + queens)],
+               matrix.EquityDelta(kings, queens),
+               "stored equity delta should match accessor");
     ExpectNear(matrix.WinProb(kings, king_queen), 0.0f,
                "same K kicker should chop, not win");
     ExpectNear(matrix.WinProb(king_queen, kings), 0.0f,

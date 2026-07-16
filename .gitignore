@@ -14,6 +14,8 @@ __pycache__/
 pysrc/*/*.so
 pysrc/*.egg-info/
 build/
+build-release/
+build-no-openblas/
 build/cache/
 dist/
 cmake-build-*/

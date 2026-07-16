@@ -17,12 +17,15 @@ class TerminalCfvCalculator {
  public:
   TerminalCfvCalculator(const GameBasic& game_basic,
                         const SevenCardLookupTable& evaluator);
+  ~TerminalCfvCalculator();
 
   std::vector<float> Calculate(const NodeState& node, int player,
                                const IsomorphicMapping& mapping,
                                const std::vector<float>& opponent_reach);
 
  private:
+  struct RiverShowdownCache;
+
   void ValidateInput(const NodeState& node, int player,
                      const IsomorphicMapping& mapping,
                      const std::vector<float>& opponent_reach) const;
@@ -32,17 +35,20 @@ class TerminalCfvCalculator {
       const;
   std::vector<float> CalculateRiverShowdown(
       const NodeState& node, int player, const IsomorphicMapping& mapping,
-      const std::vector<float>& opponent_reach) const;
+      const std::vector<float>& opponent_reach);
   std::vector<float> CalculateRunoutShowdown(
       const NodeState& node, int player, const IsomorphicMapping& mapping,
       const std::vector<float>& opponent_reach);
 
   const TerminalWinProbMatrix& MatrixFor(const IsomorphicMapping& mapping);
+  const RiverShowdownCache& RiverCacheFor(const IsomorphicMapping& mapping);
 
   const GameBasic& game_basic_;
   const SevenCardLookupTable& evaluator_;
   std::unordered_map<std::string, std::unique_ptr<TerminalWinProbMatrix>>
       matrix_cache_;
+  std::unordered_map<std::string, std::unique_ptr<RiverShowdownCache>>
+      river_cache_;
 };
 
 }  // namespace fisher::game::poker

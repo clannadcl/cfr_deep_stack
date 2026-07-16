@@ -76,9 +76,23 @@ Useful options:
 
 - `-DFISHER_BUILD_PYBIND=ON|OFF`: build the Python extension. Defaults to `ON`.
 - `-DFISHER_BUILD_TESTS=ON|OFF`: build C++ tests. Defaults to `ON`.
+- `-DFISHER_USE_OPENBLAS=ON|OFF`: use OpenBLAS CBLAS for hot matrix-vector
+  kernels. Defaults to `ON` and falls back to the built-in loop if OpenBLAS is
+  unavailable. The OpenBLAS backend is forced to one thread in code so solver
+  worker threads do not oversubscribe the CPU.
 - `-DCMAKE_BUILD_TYPE=Release|Debug`: choose optimization/debug mode.
 - `-DPython_EXECUTABLE=/path/to/python`: select the Python ABI for `_core`.
 - `-DCMAKE_PREFIX_PATH=/path/to/pybind11/cmake`: help CMake find pybind11.
+
+For the OpenBLAS backend:
+
+```bash
+# macOS
+brew install openblas
+
+# Ubuntu/Debian
+sudo apt install libopenblas-dev
+```
 
 The pybind build writes:
 

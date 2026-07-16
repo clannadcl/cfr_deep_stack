@@ -4,6 +4,7 @@ project(fisher LANGUAGES C CXX)
 
 option(FISHER_BUILD_PYBIND "Build the Python pybind11 extension" ON)
 option(FISHER_BUILD_TESTS "Build C++ unit tests" ON)
+option(FISHER_USE_OPENBLAS "Use OpenBLAS CBLAS for matrix-vector kernels" ON)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -51,6 +52,43 @@ target_compile_definitions(fisher_core
   PRIVATE
     FISHER_LOOKUP_CACHE_DIR="${CMAKE_CURRENT_BINARY_DIR}/cache"
 )
+
+if(FISHER_USE_OPENBLAS)
+  set(FISHER_OPENBLAS_HINTS
+    $ENV{OPENBLAS_ROOT}
+    /opt/homebrew/opt/openblas
+    /usr/local/opt/openblas
+  )
+
+  find_path(OPENBLAS_INCLUDE_DIR
+    NAMES cblas.h
+    HINTS ${FISHER_OPENBLAS_HINTS}
+    PATH_SUFFIXES include
+    NO_DEFAULT_PATH
+  )
+  find_library(OPENBLAS_LIBRARY
+    NAMES openblas
+    HINTS ${FISHER_OPENBLAS_HINTS}
+    PATH_SUFFIXES lib
+    NO_DEFAULT_PATH
+  )
+
+  if(NOT OPENBLAS_INCLUDE_DIR)
+    find_path(OPENBLAS_INCLUDE_DIR NAMES cblas.h)
+  endif()
+  if(NOT OPENBLAS_LIBRARY)
+    find_library(OPENBLAS_LIBRARY NAMES openblas)
+  endif()
+
+  if(OPENBLAS_INCLUDE_DIR AND OPENBLAS_LIBRARY)
+    message(STATUS "Using OpenBLAS: ${OPENBLAS_LIBRARY}")
+    target_include_directories(fisher_core PRIVATE ${OPENBLAS_INCLUDE_DIR})
+    target_link_libraries(fisher_core PUBLIC ${OPENBLAS_LIBRARY})
+    target_compile_definitions(fisher_core PRIVATE FISHER_USE_OPENBLAS=1)
+  else()
+    message(WARNING "FISHER_USE_OPENBLAS=ON but OpenBLAS was not found; using built-in matrix-vector fallback")
+  endif()
+endif()
 
 if(FISHER_BUILD_TESTS)
   enable_testing()
