@@ -1,3 +1,6 @@
+#include <array>
+#include <cstddef>
+#include <cstdint>
 #include <cmath>
 #include <stdexcept>
 #include <string>
@@ -51,6 +54,181 @@ int IsoIndex(const fisher::game::poker::GameBasic& game_basic,
              const char* hand) {
   return mapping.RawToIso(
       game_basic.HandIndex(fisher::game::poker::PokerHand(hand)));
+}
+
+struct TestRawHandEntry {
+  int raw_index = -1;
+  int iso_index = -1;
+  uint8_t high_card = 0;
+  uint8_t low_card = 0;
+  float normalization = 0.0f;
+
+  bool Contains(uint8_t card) const {
+    return high_card == card || low_card == card;
+  }
+
+  bool CollidesWith(const TestRawHandEntry& other) const {
+    return Contains(other.high_card) || Contains(other.low_card);
+  }
+};
+
+std::vector<TestRawHandEntry> BuildTestRawHandEntries(
+    const fisher::game::poker::GameBasic& game_basic,
+    const fisher::game::poker::IsomorphicMapping& mapping) {
+  std::vector<TestRawHandEntry> entries;
+  for (int raw_index = 0; raw_index < fisher::game::poker::GameBasic::kNumHands;
+       ++raw_index) {
+    const int iso_index = mapping.RawToIso(raw_index);
+    if (iso_index == fisher::game::poker::IsomorphicMapping::kInvalidIsoIndex) {
+      continue;
+    }
+    const fisher::game::poker::PokerHand& hand =
+        game_basic.HandFromIndex(raw_index);
+    entries.push_back(TestRawHandEntry{
+        raw_index,
+        iso_index,
+        hand.HighCard().Value(),
+        hand.LowCard().Value(),
+        1.0f / static_cast<float>(mapping.RawHandCount(iso_index)),
+    });
+  }
+  return entries;
+}
+
+std::vector<uint8_t> TestRunoutCards(
+    const fisher::game::poker::PokerCards& board) {
+  std::array<bool, fisher::game::poker::GameBasic::kDeckSize> dead_cards{};
+  for (const fisher::game::poker::PokerCard card : board.Cards()) {
+    dead_cards[static_cast<std::size_t>(card.Value())] = true;
+  }
+  std::vector<uint8_t> runout_cards;
+  for (uint8_t card = 0; card < fisher::game::poker::GameBasic::kDeckSize;
+       ++card) {
+    if (!dead_cards[static_cast<std::size_t>(card)]) {
+      runout_cards.push_back(card);
+    }
+  }
+  return runout_cards;
+}
+
+std::array<uint8_t, fisher::game::poker::PokerHandEvaluator::kSevenCards>
+TestBaseSevenCards(const fisher::game::poker::PokerCards& board,
+                   const TestRawHandEntry& hand) {
+  std::array<uint8_t, fisher::game::poker::PokerHandEvaluator::kSevenCards>
+      cards{};
+  for (std::size_t index = 0; index < board.Size(); ++index) {
+    cards[index] = board.Cards()[index].Value();
+  }
+  cards[5] = hand.high_card;
+  cards[6] = hand.low_card;
+  return cards;
+}
+
+float ReferenceRawBlockWinProb(
+    const fisher::game::poker::PokerCards& board,
+    const std::vector<uint8_t>& runout_cards,
+    const fisher::game::poker::SevenCardLookupTable& evaluator,
+    const TestRawHandEntry& hero, const TestRawHandEntry& opponent) {
+  if (hero.CollidesWith(opponent)) {
+    return 0.0f;
+  }
+
+  int wins = 0;
+  int runouts = 0;
+  auto hero_cards = TestBaseSevenCards(board, hero);
+  auto opponent_cards = TestBaseSevenCards(board, opponent);
+  if (board.Size() == 4) {
+    for (uint8_t river : runout_cards) {
+      if (hero.Contains(river) || opponent.Contains(river)) {
+        continue;
+      }
+      hero_cards[4] = river;
+      opponent_cards[4] = river;
+      wins += evaluator.Evaluate7(hero_cards.data()) >
+              evaluator.Evaluate7(opponent_cards.data());
+      ++runouts;
+    }
+  } else if (board.Size() == 3) {
+    for (std::size_t turn_index = 0; turn_index < runout_cards.size();
+         ++turn_index) {
+      const uint8_t turn = runout_cards[turn_index];
+      if (hero.Contains(turn) || opponent.Contains(turn)) {
+        continue;
+      }
+      hero_cards[3] = turn;
+      opponent_cards[3] = turn;
+      for (std::size_t river_index = turn_index + 1;
+           river_index < runout_cards.size(); ++river_index) {
+        const uint8_t river = runout_cards[river_index];
+        if (hero.Contains(river) || opponent.Contains(river)) {
+          continue;
+        }
+        hero_cards[4] = river;
+        opponent_cards[4] = river;
+        wins += evaluator.Evaluate7(hero_cards.data()) >
+                evaluator.Evaluate7(opponent_cards.data());
+        ++runouts;
+      }
+    }
+  } else {
+    throw std::runtime_error("reference matrix only supports flop or turn");
+  }
+  if (runouts <= 0) {
+    throw std::runtime_error("reference matrix pair has no runouts");
+  }
+  return static_cast<float>(wins) / static_cast<float>(runouts);
+}
+
+std::vector<float> ReferenceFullBlockWinMatrix(
+    const fisher::game::poker::GameBasic& game_basic,
+    const fisher::game::poker::PokerCards& board,
+    const fisher::game::poker::IsomorphicMapping& mapping,
+    const fisher::game::poker::SevenCardLookupTable& evaluator) {
+  const std::vector<TestRawHandEntry> hands =
+      BuildTestRawHandEntries(game_basic, mapping);
+  const std::vector<uint8_t> runout_cards = TestRunoutCards(board);
+  std::vector<float> reference(static_cast<std::size_t>(
+                                   mapping.NumIsoHands() *
+                                   mapping.NumIsoHands()),
+                               0.0f);
+  for (const TestRawHandEntry& hero : hands) {
+    for (const TestRawHandEntry& opponent : hands) {
+      reference[static_cast<std::size_t>(hero.iso_index *
+                                             mapping.NumIsoHands() +
+                                         opponent.iso_index)] +=
+          ReferenceRawBlockWinProb(board, runout_cards, evaluator, hero,
+                                   opponent) *
+          hero.normalization * opponent.normalization;
+    }
+  }
+  return reference;
+}
+
+void ExpectMatchesReferenceFullBlock(
+    const fisher::game::poker::GameBasic& game_basic,
+    const fisher::game::poker::PokerCards& board,
+    const std::vector<std::string>& possible_hands,
+    const fisher::game::poker::SevenCardLookupTable& evaluator,
+    const char* message) {
+  const fisher::game::poker::IsomorphicMapping mapping(
+      game_basic, board, PossibleHands(game_basic, possible_hands));
+  const fisher::game::poker::TerminalWinProbMatrix matrix(game_basic, board,
+                                                          mapping, evaluator);
+  const std::vector<float> reference =
+      ReferenceFullBlockWinMatrix(game_basic, board, mapping, evaluator);
+  for (int hero_iso = 0; hero_iso < mapping.NumIsoHands(); ++hero_iso) {
+    for (int opponent_iso = 0; opponent_iso < mapping.NumIsoHands();
+         ++opponent_iso) {
+      const float actual = matrix.WinProb(hero_iso, opponent_iso);
+      const float expected =
+          reference[static_cast<std::size_t>(hero_iso *
+                                                mapping.NumIsoHands() +
+                                            opponent_iso)];
+      if (std::fabs(actual - expected) > 1e-5f) {
+        throw std::runtime_error(message);
+      }
+    }
+  }
 }
 
 }  // namespace
@@ -129,6 +307,21 @@ int main() {
     ExpectNear(matrix.EquityDelta(kings, queens),
                -matrix.EquityDelta(queens, kings),
                "flop equity delta should be antisymmetric");
+  }
+
+  {
+    ExpectMatchesReferenceFullBlock(
+        game_basic, PokerCards("AcAdAhAs"),
+        {"KcKd", "KhKs", "QcQd", "QhQs", "JcJd", "JhJs"}, evaluator,
+        "turn optimized matrix should match full raw block averaging");
+  }
+
+  {
+    ExpectMatchesReferenceFullBlock(
+        game_basic, PokerCards("2c7dJh"),
+        {"AcAd", "AhAs", "KcKd", "KhKs", "QcQd", "QhQs", "TcTd", "ThTs"},
+        evaluator,
+        "flop optimized matrix should match full raw block averaging");
   }
 
   {

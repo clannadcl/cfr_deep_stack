@@ -69,6 +69,21 @@ std::vector<RawHandEntry> BuildRawHandEntries(
   return entries;
 }
 
+std::vector<std::vector<RawHandEntry>> BuildIsoBuckets(
+    int num_iso_hands, const std::vector<RawHandEntry>& hands) {
+  std::vector<std::vector<RawHandEntry>> buckets(
+      static_cast<std::size_t>(num_iso_hands));
+  for (const RawHandEntry& hand : hands) {
+    buckets[static_cast<std::size_t>(hand.iso_index)].push_back(hand);
+  }
+  for (int iso_index = 0; iso_index < num_iso_hands; ++iso_index) {
+    if (buckets[static_cast<std::size_t>(iso_index)].empty()) {
+      throw std::runtime_error("Terminal matrix has an empty iso bucket");
+    }
+  }
+  return buckets;
+}
+
 std::array<uint8_t, kSevenCards> BaseSevenCards(const PokerCards& board,
                                                 const RawHandEntry& hand) {
   std::array<uint8_t, kSevenCards> cards{};
@@ -208,39 +223,50 @@ void TerminalWinProbMatrix::Build(
   if (round_ == PokerRound::kTurn) {
     const auto strengths =
         BuildTurnStrengths(board_, hands, runout_cards, evaluator);
-    for (const RawHandEntry& hero : hands) {
-      for (const RawHandEntry& opponent : hands) {
-        if (hero.CollidesWith(opponent)) {
-          continue;
-        }
-        int wins = 0;
-        int runouts = 0;
-        const auto& hero_strengths =
-            strengths[static_cast<std::size_t>(hero.raw_index)];
-        const auto& opponent_strengths =
-            strengths[static_cast<std::size_t>(opponent.raw_index)];
-        for (uint8_t river : runout_cards) {
-          if (hero.Contains(river) || opponent.Contains(river)) {
+    const std::vector<std::vector<RawHandEntry>> buckets =
+        BuildIsoBuckets(num_iso_hands_, hands);
+    for (int hero_iso = 0; hero_iso < num_iso_hands_; ++hero_iso) {
+      const RawHandEntry& hero =
+          buckets[static_cast<std::size_t>(hero_iso)].front();
+      const auto& hero_strengths =
+          strengths[static_cast<std::size_t>(hero.raw_index)];
+      for (int opponent_iso = 0; opponent_iso < num_iso_hands_;
+           ++opponent_iso) {
+        double bucket_win_prob = 0.0;
+        for (const RawHandEntry& opponent :
+             buckets[static_cast<std::size_t>(opponent_iso)]) {
+          if (hero.CollidesWith(opponent)) {
             continue;
           }
-          const uint16_t hero_strength =
-              hero_strengths[static_cast<std::size_t>(river)];
-          const uint16_t opponent_strength =
-              opponent_strengths[static_cast<std::size_t>(river)];
-          if (hero_strength == kInvalidStrength ||
-              opponent_strength == kInvalidStrength) {
-            throw std::runtime_error("Missing turn hand strength");
+          int wins = 0;
+          int runouts = 0;
+          const auto& opponent_strengths =
+              strengths[static_cast<std::size_t>(opponent.raw_index)];
+          for (uint8_t river : runout_cards) {
+            if (hero.Contains(river) || opponent.Contains(river)) {
+              continue;
+            }
+            const uint16_t hero_strength =
+                hero_strengths[static_cast<std::size_t>(river)];
+            const uint16_t opponent_strength =
+                opponent_strengths[static_cast<std::size_t>(river)];
+            if (hero_strength == kInvalidStrength ||
+                opponent_strength == kInvalidStrength) {
+              throw std::runtime_error("Missing turn hand strength");
+            }
+            wins += hero_strength > opponent_strength;
+            ++runouts;
           }
-          wins += hero_strength > opponent_strength;
-          ++runouts;
+          if (runouts <= 0) {
+            throw std::runtime_error("Turn equity pair has no runouts");
+          }
+          bucket_win_prob +=
+              (static_cast<double>(wins) / static_cast<double>(runouts)) *
+              static_cast<double>(opponent.normalization);
         }
-        if (runouts <= 0) {
-          throw std::runtime_error("Turn equity pair has no runouts");
-        }
-        win_prob_[static_cast<std::size_t>(hero.iso_index * num_iso_hands_ +
-                                          opponent.iso_index)] +=
-            (static_cast<float>(wins) / static_cast<float>(runouts)) *
-            hero.normalization * opponent.normalization;
+        win_prob_[static_cast<std::size_t>(hero_iso * num_iso_hands_ +
+                                          opponent_iso)] =
+            static_cast<float>(bucket_win_prob);
       }
     }
     return;
@@ -248,48 +274,59 @@ void TerminalWinProbMatrix::Build(
 
   const auto strengths =
       BuildFlopStrengths(board_, hands, runout_cards, evaluator);
-  for (const RawHandEntry& hero : hands) {
-    for (const RawHandEntry& opponent : hands) {
-      if (hero.CollidesWith(opponent)) {
-        continue;
-      }
-      int wins = 0;
-      int runouts = 0;
-      const auto& hero_strengths =
-          strengths[static_cast<std::size_t>(hero.raw_index)];
-      const auto& opponent_strengths =
-          strengths[static_cast<std::size_t>(opponent.raw_index)];
-      for (std::size_t turn_index = 0; turn_index < runout_cards.size();
-           ++turn_index) {
-        const uint8_t turn = runout_cards[turn_index];
-        if (hero.Contains(turn) || opponent.Contains(turn)) {
+  const std::vector<std::vector<RawHandEntry>> buckets =
+      BuildIsoBuckets(num_iso_hands_, hands);
+  for (int hero_iso = 0; hero_iso < num_iso_hands_; ++hero_iso) {
+    const RawHandEntry& hero =
+        buckets[static_cast<std::size_t>(hero_iso)].front();
+    const auto& hero_strengths =
+        strengths[static_cast<std::size_t>(hero.raw_index)];
+    for (int opponent_iso = 0; opponent_iso < num_iso_hands_;
+         ++opponent_iso) {
+      double bucket_win_prob = 0.0;
+      for (const RawHandEntry& opponent :
+           buckets[static_cast<std::size_t>(opponent_iso)]) {
+        if (hero.CollidesWith(opponent)) {
           continue;
         }
-        for (std::size_t river_index = turn_index + 1;
-             river_index < runout_cards.size(); ++river_index) {
-          const uint8_t river = runout_cards[river_index];
-          if (hero.Contains(river) || opponent.Contains(river)) {
+        int wins = 0;
+        int runouts = 0;
+        const auto& opponent_strengths =
+            strengths[static_cast<std::size_t>(opponent.raw_index)];
+        for (std::size_t turn_index = 0; turn_index < runout_cards.size();
+             ++turn_index) {
+          const uint8_t turn = runout_cards[turn_index];
+          if (hero.Contains(turn) || opponent.Contains(turn)) {
             continue;
           }
-          const std::size_t runout_index =
-              static_cast<std::size_t>(turn) * GameBasic::kDeckSize + river;
-          const uint16_t hero_strength = hero_strengths[runout_index];
-          const uint16_t opponent_strength = opponent_strengths[runout_index];
-          if (hero_strength == kInvalidStrength ||
-              opponent_strength == kInvalidStrength) {
-            throw std::runtime_error("Missing flop hand strength");
+          for (std::size_t river_index = turn_index + 1;
+               river_index < runout_cards.size(); ++river_index) {
+            const uint8_t river = runout_cards[river_index];
+            if (hero.Contains(river) || opponent.Contains(river)) {
+              continue;
+            }
+            const std::size_t runout_index =
+                static_cast<std::size_t>(turn) * GameBasic::kDeckSize + river;
+            const uint16_t hero_strength = hero_strengths[runout_index];
+            const uint16_t opponent_strength = opponent_strengths[runout_index];
+            if (hero_strength == kInvalidStrength ||
+                opponent_strength == kInvalidStrength) {
+              throw std::runtime_error("Missing flop hand strength");
+            }
+            wins += hero_strength > opponent_strength;
+            ++runouts;
           }
-          wins += hero_strength > opponent_strength;
-          ++runouts;
         }
-      }
-      if (runouts <= 0) {
-        throw std::runtime_error("Flop equity pair has no runouts");
+        if (runouts <= 0) {
+          throw std::runtime_error("Flop equity pair has no runouts");
+        }
+        bucket_win_prob +=
+            (static_cast<double>(wins) / static_cast<double>(runouts)) *
+            static_cast<double>(opponent.normalization);
       }
       win_prob_[static_cast<std::size_t>(hero.iso_index * num_iso_hands_ +
-                                        opponent.iso_index)] +=
-          (static_cast<float>(wins) / static_cast<float>(runouts)) *
-          hero.normalization * opponent.normalization;
+                                        opponent_iso)] =
+          static_cast<float>(bucket_win_prob);
     }
   }
 }
