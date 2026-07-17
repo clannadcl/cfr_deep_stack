@@ -13,11 +13,14 @@
 #include <utility>
 #include <vector>
 
+#include "algorithm/best_response_calculator.h"
 #include "game/poker/game_basic.h"
 #include "game/poker/node_state.h"
 
 namespace fisher::algorithm {
 namespace {
+
+constexpr float kEvMassEpsilon = 1e-10f;
 
 struct EvRawHandEntry {
   int iso_index = -1;
@@ -80,6 +83,22 @@ int ResolveThreadCount(int requested_threads) {
   }
   const unsigned int hardware_threads = std::thread::hardware_concurrency();
   return std::max(1, static_cast<int>(hardware_threads));
+}
+
+int ValidatePositiveInt(int value, const char* name) {
+  if (value <= 0) {
+    throw std::invalid_argument(name);
+  }
+  return value;
+}
+
+float ResolveTargetExploitability(
+    const std::shared_ptr<game::poker::SubgameSetup>& setup,
+    float requested_target) {
+  if (requested_target >= 0.0f) {
+    return requested_target;
+  }
+  return setup->Pot() * 0.001f;
 }
 
 std::vector<EvRawHandEntry> BuildEvRawHandEntries(
@@ -204,8 +223,14 @@ void ValidateAdjacentBoardTransition(
 }  // namespace
 
 PokerCfrSolver::Args::Args(std::shared_ptr<game::poker::SubgameSetup> setup,
-                           int num_threads)
-    : setup(std::move(setup)), num_threads(num_threads) {}
+                           int num_threads, int max_iterations,
+                           int exploitability_check_interval,
+                           float target_exploitability)
+    : setup(std::move(setup)),
+      num_threads(num_threads),
+      max_iterations(max_iterations),
+      exploitability_check_interval(exploitability_check_interval),
+      target_exploitability(target_exploitability) {}
 
 IsoTransition BuildIsoTransition(
     int parent_node_id, int child_node_id,
@@ -250,7 +275,14 @@ PokerCfrSolver::PokerCfrSolver(const Args& args)
       mapping_table_(setup_->BasicGame(), setup_->RootBelief()),
       storage_(tree_, &mapping_table_),
       terminal_cfv_calculator_(setup_->BasicGame(), evaluator_),
-      num_threads_(ResolveThreadCount(args.num_threads)) {
+      num_threads_(ResolveThreadCount(args.num_threads)),
+      max_iterations_(ValidatePositiveInt(
+          args.max_iterations, "Poker CFR max iterations must be positive")),
+      exploitability_check_interval_(ValidatePositiveInt(
+          args.exploitability_check_interval,
+          "Poker CFR exploitability check interval must be positive")),
+      target_exploitability_(
+          ResolveTargetExploitability(setup_, args.target_exploitability)) {
   BuildNodeCaches();
 }
 
@@ -299,6 +331,38 @@ PokerCfrSolver::HeroPassProfile PokerCfrSolver::RunHeroPassProfiled(
   profile.backward_update_ms = elapsed_ms(backward_begin, backward_end);
   profile.total_ms = elapsed_ms(total_begin, backward_end);
   return profile;
+}
+
+PokerCfrSolver::SolveResult PokerCfrSolver::Solve(float average_epsilon) {
+  if (average_epsilon <= 0.0f) {
+    throw std::invalid_argument("Average strategy epsilon must be positive");
+  }
+
+  SolveResult result;
+  result.target_exploitability = target_exploitability_;
+
+  for (int iteration = 1; iteration <= max_iterations_; ++iteration) {
+    RunIteration();
+    const bool should_check =
+        iteration % exploitability_check_interval_ == 0 ||
+        iteration == max_iterations_;
+    if (!should_check) {
+      continue;
+    }
+
+    const ExploitabilityResult exploitability_result =
+        BestResponseCalculator(this).Compute(average_epsilon);
+    result.iterations = iteration;
+    result.exploitability = exploitability_result.exploitability;
+    result.current_ev = exploitability_result.current_ev;
+    result.best_response_ev = exploitability_result.best_response_ev;
+    result.converged = result.exploitability <= target_exploitability_;
+    if (result.converged) {
+      break;
+    }
+  }
+
+  return result;
 }
 
 void PokerCfrSolver::FinalizeAverageStrategy(float average_epsilon) {
@@ -399,14 +463,11 @@ float PokerCfrSolver::AverageStrategyAt(int node_id, int action_index,
          denominator;
 }
 
-PokerCfrSolver::NodeEvDetail PokerCfrSolver::NodeEv(
-    int node_id, int player, float mass_epsilon) const {
+PokerCfrSolver::NodeEvDetail PokerCfrSolver::NodeEv(int node_id,
+                                                    int player) const {
   if (!average_finalized_) {
     throw std::invalid_argument(
         "Node EV requires FinalizeAverageStrategy first");
-  }
-  if (mass_epsilon <= 0.0f) {
-    throw std::invalid_argument("Node EV mass epsilon must be positive");
   }
   tree_.Node(node_id);
   ValidatePlayer(player);
@@ -423,7 +484,7 @@ PokerCfrSolver::NodeEvDetail PokerCfrSolver::NodeEv(
   for (int hand = 0; hand < storage_.NumHands(node_id); ++hand) {
     const std::size_t hand_index = static_cast<std::size_t>(hand);
     detail.cfv[hand_index] = storage_.CfvAt(node_id, player, hand);
-    if (detail.valid_mass[hand_index] > mass_epsilon) {
+    if (detail.valid_mass[hand_index] > kEvMassEpsilon) {
       detail.hand_ev[hand_index] =
           detail.cfv[hand_index] / detail.valid_mass[hand_index];
     }
@@ -435,7 +496,7 @@ PokerCfrSolver::NodeEvDetail PokerCfrSolver::NodeEv(
 
   detail.range_mass = static_cast<float>(denominator);
   detail.range_ev =
-      denominator > static_cast<double>(mass_epsilon)
+      denominator > static_cast<double>(kEvMassEpsilon)
           ? static_cast<float>(numerator / denominator)
           : 0.0f;
   return detail;

@@ -14,6 +14,7 @@ set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 add_library(fisher_core STATIC
   third_party/hand-isomorphism/src/deck.c
   third_party/hand-isomorphism/src/hand_index.c
+  csrc/src/algorithm/best_response_calculator.cc
   csrc/src/algorithm/cfr.cc
   csrc/src/algorithm/cfr_storage.cc
   csrc/src/algorithm/data_propagation.cc
@@ -137,6 +138,18 @@ if(FISHER_BUILD_TESTS)
   )
 
   add_test(NAME poker_cfr_solver_test COMMAND poker_cfr_solver_test)
+
+  add_executable(best_response_calculator_test
+    csrc/tests/algorithm/best_response_calculator_test.cc
+  )
+
+  target_link_libraries(best_response_calculator_test
+    PRIVATE
+      fisher_core
+  )
+
+  add_test(NAME best_response_calculator_test
+           COMMAND best_response_calculator_test)
 
   add_executable(realistic_spot_regression_test
     csrc/tests/algorithm/realistic_spot_regression_test.cc

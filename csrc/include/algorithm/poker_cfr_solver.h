@@ -54,10 +54,24 @@ class PokerCfrSolver {
 
   struct Args {
     explicit Args(std::shared_ptr<game::poker::SubgameSetup> setup,
-                  int num_threads = 0);
+                  int num_threads = 0, int max_iterations = 500,
+                  int exploitability_check_interval = 50,
+                  float target_exploitability = -1.0f);
 
     std::shared_ptr<game::poker::SubgameSetup> setup;
     int num_threads = 0;
+    int max_iterations = 500;
+    int exploitability_check_interval = 50;
+    float target_exploitability = -1.0f;
+  };
+
+  struct SolveResult {
+    int iterations = 0;
+    bool converged = false;
+    float target_exploitability = 0.0f;
+    float exploitability = 0.0f;
+    std::array<float, 2> current_ev = {0.0f, 0.0f};
+    std::array<float, 2> best_response_ev = {0.0f, 0.0f};
   };
 
   explicit PokerCfrSolver(const Args& args);
@@ -65,14 +79,14 @@ class PokerCfrSolver {
   void RunIteration();
   void RunHeroPass(int hero_player);
   HeroPassProfile RunHeroPassProfiled(int hero_player);
+  SolveResult Solve(float average_epsilon = 1e-12f);
   void FinalizeAverageStrategy(float average_epsilon = 1e-12f);
 
   std::vector<float> CurrentStrategyData() const;
   std::vector<float> AverageStrategyData(float epsilon = 1e-12f) const;
   float AverageStrategyAt(int node_id, int action_index, int hand_index,
                           float epsilon = 1e-12f) const;
-  NodeEvDetail NodeEv(int node_id, int player,
-                      float mass_epsilon = 1e-15f) const;
+  NodeEvDetail NodeEv(int node_id, int player) const;
 
   const game::poker::PokerTree& Tree() const;
   int NumThreads() const;
@@ -117,6 +131,9 @@ class PokerCfrSolver {
   std::vector<int> reverse_node_ids_;
   std::unordered_map<int, IsoTransition> chance_transitions_by_child_;
   int num_threads_ = 1;
+  int max_iterations_ = 500;
+  int exploitability_check_interval_ = 50;
+  float target_exploitability_ = 0.0f;
   bool average_finalized_ = false;
 };
 

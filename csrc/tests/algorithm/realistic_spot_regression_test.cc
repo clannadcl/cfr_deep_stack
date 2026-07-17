@@ -11,6 +11,7 @@
 #include <sstream>
 #include <vector>
 
+#include "algorithm/best_response_calculator.h"
 #include "algorithm/poker_cfr_solver.h"
 #include "game/poker/action.h"
 #include "game/poker/game_basic.h"
@@ -347,12 +348,12 @@ std::vector<fisher::game::poker::Action> ParseActionHistory(
   return parsed;
 }
 
-SpotConfig LoadTurnTestCaseConfig() {
+SpotConfig LoadTestCaseConfig(const std::string& file_name) {
   const std::string path =
-      std::string(FISHER_TEST_DATA_DIR) + "/turn_test_case.json";
+      std::string(FISHER_TEST_DATA_DIR) + "/" + file_name;
   std::ifstream input(path);
   if (!input.is_open()) {
-    throw std::runtime_error("failed to open turn test case fixture");
+    throw std::runtime_error("failed to open test case fixture: " + file_name);
   }
   std::ostringstream buffer;
   buffer << input.rdbuf();
@@ -417,7 +418,7 @@ int main() {
 
   std::cout << std::fixed << std::setprecision(3);
   const auto load_begin = std::chrono::steady_clock::now();
-  SpotConfig fixture = LoadTurnTestCaseConfig();
+  SpotConfig fixture = LoadTestCaseConfig("turn_test_case.json");
   const auto load_end = std::chrono::steady_clock::now();
 
   const auto setup_begin = std::chrono::steady_clock::now();
@@ -515,6 +516,94 @@ int main() {
          "current strategy should remain finite");
   Expect(IsFiniteVector(solver.AverageStrategyData()),
          "average strategy should remain finite");
+
+  const auto river_load_begin = std::chrono::steady_clock::now();
+  SpotConfig river_fixture = LoadTestCaseConfig("river_test_case.json");
+  const auto river_load_end = std::chrono::steady_clock::now();
+  const auto river_setup_begin = std::chrono::steady_clock::now();
+  GameBasic river_game(RakeConfig{/*enabled=*/river_fixture.rake_enabled,
+                                  /*percentage=*/river_fixture.rake_percentage,
+                                  /*cap=*/river_fixture.rake_cap});
+  TreeAbstractedBets river_abstracted_bets(river_fixture.bets,
+                                           river_fixture.donk_bets);
+  auto river_setup = std::make_shared<SubgameSetup>(SubgameSetup::Args(
+      PokerCards(river_fixture.board_cards), river_fixture.common_pot,
+      river_fixture.stacks, river_fixture.bet_total,
+      river_fixture.bet_current_round, river_fixture.current_player,
+      river_fixture.previous_street_aggressor, river_fixture.raise_count,
+      river_fixture.root_action_history, river_fixture.ranges,
+      river_abstracted_bets, river_game,
+      /*bet_rounding=*/river_fixture.min_bet_increment,
+      /*min_raise_size=*/river_fixture.min_bet_increment));
+  const auto river_setup_end = std::chrono::steady_clock::now();
+
+  Expect(river_fixture.name == "river_co_vs_bb_kd8d4d4s4c_srp_xbc_xbc",
+         "river fixture name mismatch");
+  Expect(river_fixture.round == "river", "river fixture round mismatch");
+  Expect(river_setup->Street() == PokerRound::kRiver,
+         "river setup should be river");
+  Expect(river_setup->Pot() == river_fixture.common_pot,
+         "river pot mismatch");
+
+  const auto river_solver_begin = std::chrono::steady_clock::now();
+  PokerCfrSolver river_solver{PokerCfrSolver::Args(
+      river_setup, /*num_threads=*/0, /*max_iterations=*/500,
+      /*exploitability_check_interval=*/50,
+      /*target_exploitability=*/-1.0f)};
+  const auto river_solver_end = std::chrono::steady_clock::now();
+  const float river_target = river_setup->Pot() * 0.001f;
+
+  std::cout << "river_fixture=" << river_fixture.name
+            << " load_ms="
+            << MillisecondsSince(river_load_begin, river_load_end)
+            << " setup_ms="
+            << MillisecondsSince(river_setup_begin, river_setup_end)
+            << " solver_construct_ms="
+            << MillisecondsSince(river_solver_begin, river_solver_end)
+            << " threads=" << river_solver.NumThreads()
+            << " nodes=" << river_solver.Tree().NumNodes()
+            << " terminal_nodes=" << river_solver.TerminalNodeIds().size()
+            << " target_exploitability=" << river_target << '\n';
+
+  int reached_iteration = -1;
+  float last_exploitability = 0.0f;
+  const auto river_solve_begin = std::chrono::steady_clock::now();
+  for (int iteration = 1; iteration <= 500; ++iteration) {
+    river_solver.RunIteration();
+    if (iteration % 50 != 0) {
+      continue;
+    }
+    const auto check_begin = std::chrono::steady_clock::now();
+    const fisher::algorithm::ExploitabilityResult result =
+        fisher::algorithm::BestResponseCalculator(&river_solver).Compute();
+    const auto check_end = std::chrono::steady_clock::now();
+    last_exploitability = result.exploitability;
+    std::cout << "river_iteration=" << iteration
+              << " exploitability=" << result.exploitability
+              << " target=" << river_target
+              << " current_ev_p0=" << result.current_ev[0]
+              << " current_ev_p1=" << result.current_ev[1]
+              << " br_ev_p0=" << result.best_response_ev[0]
+              << " br_ev_p1=" << result.best_response_ev[1]
+              << " check_ms=" << MillisecondsSince(check_begin, check_end)
+              << '\n';
+    Expect(std::isfinite(result.exploitability),
+           "river exploitability should be finite");
+    if (result.exploitability <= river_target) {
+      reached_iteration = iteration;
+      break;
+    }
+  }
+  const auto river_solve_end = std::chrono::steady_clock::now();
+  std::cout << "river_solve_done"
+            << " reached_iteration=" << reached_iteration
+            << " last_exploitability=" << last_exploitability
+            << " target=" << river_target
+            << " total_ms="
+            << MillisecondsSince(river_solve_begin, river_solve_end)
+            << '\n';
+  Expect(last_exploitability >= -1e-4f,
+         "river exploitability should be non-negative");
 
   return 0;
 }
