@@ -360,6 +360,7 @@ std::vector<float> TerminalCfvCalculator::CalculateRunoutShowdown(
 const TerminalWinProbMatrix& TerminalCfvCalculator::MatrixFor(
     const IsomorphicMapping& mapping) {
   const std::string key = MatrixKey(mapping);
+  std::lock_guard<std::mutex> lock(cache_mutex_);
   auto iterator = matrix_cache_.find(key);
   if (iterator != matrix_cache_.end()) {
     return *iterator->second;
@@ -375,6 +376,7 @@ const TerminalWinProbMatrix& TerminalCfvCalculator::MatrixFor(
 const TerminalCfvCalculator::RiverShowdownCache&
 TerminalCfvCalculator::RiverCacheFor(const IsomorphicMapping& mapping) {
   const std::string key = MatrixKey(mapping);
+  std::lock_guard<std::mutex> lock(cache_mutex_);
   auto iterator = river_cache_.find(key);
   if (iterator != river_cache_.end()) {
     return *iterator->second;

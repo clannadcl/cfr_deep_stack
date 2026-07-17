@@ -82,6 +82,7 @@ int main() {
   Expect(river_tree.Root().node_id == 0, "root id mismatch");
   Expect(river_tree.Root().parent_node_id == -1,
          "root parent should be empty");
+  Expect(river_tree.Root().depth == 0, "root depth mismatch");
   Expect(river_tree.Root().node_state->Board().ToString() == "AsKdQh2c3d",
          "root state board mismatch");
   Expect(river_tree.Root().children_offset == 1,
@@ -103,6 +104,9 @@ int main() {
          "check parent mismatch");
   Expect(river_tree.Node(bet_node_id).parent_node_id == 0,
          "bet parent mismatch");
+  Expect(river_tree.Node(check_node_id).depth == 1,
+         "check depth mismatch");
+  Expect(river_tree.Node(bet_node_id).depth == 1, "bet depth mismatch");
 
   const auto& check_node = river_tree.Node(check_node_id);
   Expect(check_node.children_offset == 3, "check node offset mismatch");
@@ -129,6 +133,8 @@ int main() {
   Expect(river_tree.Node(check_check_id).node_state->Status() ==
              TerminalStatus::kShowdownTerminal,
          "river check-check should be showdown terminal");
+  Expect(river_tree.Node(check_check_id).depth == 2,
+         "river check-check depth mismatch");
   Expect(!river_tree.HasChildren(check_check_id),
          "terminal node should not have children");
   Expect(river_tree.Node(check_check_id).children_offset == -1,
@@ -144,6 +150,8 @@ int main() {
   Expect(river_tree.Node(call_id).node_state->Status() ==
              TerminalStatus::kShowdownTerminal,
          "call child terminal status mismatch");
+  Expect(river_tree.Node(fold_id).depth == 2, "fold depth mismatch");
+  Expect(river_tree.Node(call_id).depth == 2, "call depth mismatch");
 
   const int check_bet_id =
       river_tree.FindChild(check_node_id, Action::Bet(1.0f)).value();
@@ -210,6 +218,7 @@ int main() {
   Expect(chance_tree.Root().node_state->ActorPlayer() ==
              NodeState::kChancePlayer,
          "chance tree root should be chance node");
+  Expect(chance_tree.Root().depth == 0, "chance root depth mismatch");
   Expect(chance_tree.Root().children_offset == 1,
          "chance root offset mismatch");
   Expect(chance_tree.Root().num_children == 49,
@@ -223,6 +232,7 @@ int main() {
          "second chance card should follow deck order");
   Expect(chance_tree.Node(1).parent_node_id == 0,
          "chance child parent mismatch");
+  Expect(chance_tree.Node(1).depth == 1, "chance child depth mismatch");
   Expect(chance_tree.Node(1).node_state->Board().ToString() == "AsKdQh2c",
          "chance child board mismatch");
   Expect(chance_tree.Node(1).node_state->Pot() == 10.0f,

@@ -14,11 +14,12 @@ class SubgameSetup;
 
 struct PokerTreeNode {
   PokerTreeNode(int node_id, std::shared_ptr<const NodeState> node_state,
-                int parent_node_id);
+                int parent_node_id, int depth);
 
   int node_id;
   std::shared_ptr<const NodeState> node_state;
   int parent_node_id;
+  int depth;
   int children_offset = -1;
   int num_children = 0;
 };

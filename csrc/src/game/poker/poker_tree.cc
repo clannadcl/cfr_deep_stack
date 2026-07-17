@@ -25,10 +25,11 @@ bool IsPrefix(const std::vector<Action>& prefix,
 
 PokerTreeNode::PokerTreeNode(int node_id,
                              std::shared_ptr<const NodeState> node_state,
-                             int parent_node_id)
+                             int parent_node_id, int depth)
     : node_id(node_id),
       node_state(std::move(node_state)),
-      parent_node_id(parent_node_id) {}
+      parent_node_id(parent_node_id),
+      depth(depth) {}
 
 PokerTree::PokerTree(const NodeState& root_state) { Build(root_state); }
 
@@ -155,8 +156,9 @@ void PokerTree::Build(const NodeState& root_state) {
 
 int PokerTree::AddNode(const NodeState& state, int parent_node_id) {
   const int node_id = static_cast<int>(nodes_.size());
+  const int depth = parent_node_id < 0 ? 0 : Node(parent_node_id).depth + 1;
   nodes_.emplace_back(node_id, std::make_shared<NodeState>(state),
-                      parent_node_id);
+                      parent_node_id, depth);
   return node_id;
 }
 

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <mutex>
 #include <memory>
 #include <string>
 #include <unordered_map>
@@ -49,6 +50,7 @@ class TerminalCfvCalculator {
       matrix_cache_;
   std::unordered_map<std::string, std::unique_ptr<RiverShowdownCache>>
       river_cache_;
+  std::mutex cache_mutex_;
 };
 
 }  // namespace fisher::game::poker

@@ -495,6 +495,7 @@ int main() {
             << " setup_ms=" << MillisecondsSince(setup_begin, setup_end)
             << " solver_construct_ms="
             << MillisecondsSince(solver_begin, solver_end)
+            << " threads=" << solver.NumThreads()
             << " nodes=" << solver.Tree().NumNodes()
             << " terminal_nodes=" << solver.TerminalNodeIds().size() << '\n';
 

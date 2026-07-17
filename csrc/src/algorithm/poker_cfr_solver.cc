@@ -1,11 +1,16 @@
 #include "algorithm/poker_cfr_solver.h"
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cstddef>
+#include <exception>
+#include <mutex>
 #include <stdexcept>
+#include <thread>
 #include <unordered_map>
 #include <utility>
+#include <vector>
 
 #include "game/poker/game_basic.h"
 #include "game/poker/node_state.h"
@@ -31,6 +36,65 @@ std::shared_ptr<game::poker::SubgameSetup> ValidateSetup(
     throw std::invalid_argument("Poker CFR setup cannot be null");
   }
   return setup;
+}
+
+int ResolveThreadCount(int requested_threads) {
+  if (requested_threads < 0) {
+    throw std::invalid_argument("Poker CFR thread count cannot be negative");
+  }
+  if (requested_threads > 0) {
+    return requested_threads;
+  }
+  const unsigned int hardware_threads = std::thread::hardware_concurrency();
+  return std::max(1, static_cast<int>(hardware_threads));
+}
+
+template <typename Fn>
+void ParallelFor(std::size_t count, int num_threads, Fn fn) {
+  if (count == 0) {
+    return;
+  }
+  if (num_threads <= 1 || count == 1) {
+    for (std::size_t index = 0; index < count; ++index) {
+      fn(index);
+    }
+    return;
+  }
+
+  const int worker_count =
+      std::min(num_threads, static_cast<int>(count));
+  std::atomic<std::size_t> next_index{0};
+  std::mutex exception_mutex;
+  std::exception_ptr first_exception = nullptr;
+  std::vector<std::thread> workers;
+  workers.reserve(static_cast<std::size_t>(worker_count));
+
+  for (int worker = 0; worker < worker_count; ++worker) {
+    workers.emplace_back([&] {
+      while (true) {
+        const std::size_t index = next_index.fetch_add(1);
+        if (index >= count) {
+          return;
+        }
+        try {
+          fn(index);
+        } catch (...) {
+          std::lock_guard<std::mutex> lock(exception_mutex);
+          if (first_exception == nullptr) {
+            first_exception = std::current_exception();
+          }
+          return;
+        }
+      }
+    });
+  }
+
+  for (std::thread& worker : workers) {
+    worker.join();
+  }
+  if (first_exception != nullptr) {
+    std::rethrow_exception(first_exception);
+  }
 }
 
 int TransitionKey(int parent_iso, int child_iso, int child_num_hands) {
@@ -60,8 +124,9 @@ void ValidateAdjacentBoardTransition(
 
 }  // namespace
 
-PokerCfrSolver::Args::Args(std::shared_ptr<game::poker::SubgameSetup> setup)
-    : setup(std::move(setup)) {}
+PokerCfrSolver::Args::Args(std::shared_ptr<game::poker::SubgameSetup> setup,
+                           int num_threads)
+    : setup(std::move(setup)), num_threads(num_threads) {}
 
 IsoTransition BuildIsoTransition(
     int parent_node_id, int child_node_id,
@@ -105,7 +170,8 @@ PokerCfrSolver::PokerCfrSolver(const Args& args)
       tree_(setup_),
       mapping_table_(setup_->BasicGame(), setup_->RootBelief()),
       storage_(tree_, &mapping_table_),
-      terminal_cfv_calculator_(setup_->BasicGame(), evaluator_) {
+      terminal_cfv_calculator_(setup_->BasicGame(), evaluator_),
+      num_threads_(ResolveThreadCount(args.num_threads)) {
   BuildNodeCaches();
 }
 
@@ -188,6 +254,8 @@ std::vector<float> PokerCfrSolver::AverageStrategyData(float epsilon) const {
 
 const game::poker::PokerTree& PokerCfrSolver::Tree() const { return tree_; }
 
+int PokerCfrSolver::NumThreads() const { return num_threads_; }
+
 CfrStorage& PokerCfrSolver::Storage() { return storage_; }
 
 const CfrStorage& PokerCfrSolver::Storage() const { return storage_; }
@@ -211,11 +279,20 @@ const IsoTransition& PokerCfrSolver::ChanceTransition(
 
 void PokerCfrSolver::BuildNodeCaches() {
   node_mappings_.resize(static_cast<std::size_t>(tree_.NumNodes()), nullptr);
+  node_ids_by_depth_.clear();
   terminal_node_ids_.clear();
   reverse_node_ids_.clear();
   chance_transitions_by_child_.clear();
 
   for (const game::poker::PokerTreeNode& node : tree_.Nodes()) {
+    if (node.depth < 0) {
+      throw std::runtime_error("Poker tree node depth cannot be negative");
+    }
+    if (node.depth >= static_cast<int>(node_ids_by_depth_.size())) {
+      node_ids_by_depth_.resize(static_cast<std::size_t>(node.depth + 1));
+    }
+    node_ids_by_depth_[static_cast<std::size_t>(node.depth)].push_back(
+        node.node_id);
     node_mappings_[static_cast<std::size_t>(node.node_id)] =
         &mapping_table_.Get(node.node_state->Board());
     reverse_node_ids_.push_back(node.node_id);
@@ -270,16 +347,20 @@ void PokerCfrSolver::InitializeRootReach() {
 }
 
 void PokerCfrSolver::ForwardReachAndAccumulateAverage(int hero_player) {
-  for (const game::poker::PokerTreeNode& node : tree_.Nodes()) {
-    if (node.node_state->IsTerminal()) {
-      continue;
-    }
-    if (node.node_state->ActorPlayer() ==
-        game::poker::NodeState::kChancePlayer) {
-      PropagateChanceReach(node);
-    } else {
-      PropagatePlayerReach(node, hero_player);
-    }
+  for (const std::vector<int>& level : node_ids_by_depth_) {
+    ParallelFor(level.size(), num_threads_, [&](std::size_t index) {
+      const game::poker::PokerTreeNode& node =
+          tree_.Node(level[index]);
+      if (node.node_state->IsTerminal()) {
+        return;
+      }
+      if (node.node_state->ActorPlayer() ==
+          game::poker::NodeState::kChancePlayer) {
+        PropagateChanceReach(node);
+      } else {
+        PropagatePlayerReach(node, hero_player);
+      }
+    });
   }
 }
 
@@ -327,7 +408,8 @@ void PokerCfrSolver::PropagateChanceReach(
 }
 
 void PokerCfrSolver::ComputeTerminalCfvs() {
-  for (int node_id : terminal_node_ids_) {
+  ParallelFor(terminal_node_ids_.size(), num_threads_, [&](std::size_t index) {
+    const int node_id = terminal_node_ids_[index];
     const game::poker::PokerTreeNode& node = tree_.Node(node_id);
     const game::poker::IsomorphicMapping& mapping =
         *node_mappings_[static_cast<std::size_t>(node_id)];
@@ -339,21 +421,26 @@ void PokerCfrSolver::ComputeTerminalCfvs() {
           *node.node_state, player, mapping, opponent_reach);
       WriteCfvVector(node_id, player, cfv);
     }
-  }
+  });
 }
 
 void PokerCfrSolver::BackwardAndUpdate(int hero_player) {
-  for (int node_id : reverse_node_ids_) {
-    const game::poker::PokerTreeNode& node = tree_.Node(node_id);
-    if (node.node_state->IsTerminal()) {
-      continue;
-    }
-    if (node.node_state->ActorPlayer() ==
-        game::poker::NodeState::kChancePlayer) {
-      BackwardChanceNode(node);
-    } else {
-      BackwardPlayerNode(node, hero_player);
-    }
+  for (auto level_it = node_ids_by_depth_.rbegin();
+       level_it != node_ids_by_depth_.rend(); ++level_it) {
+    const std::vector<int>& level = *level_it;
+    ParallelFor(level.size(), num_threads_, [&](std::size_t index) {
+      const game::poker::PokerTreeNode& node =
+          tree_.Node(level[index]);
+      if (node.node_state->IsTerminal()) {
+        return;
+      }
+      if (node.node_state->ActorPlayer() ==
+          game::poker::NodeState::kChancePlayer) {
+        BackwardChanceNode(node);
+      } else {
+        BackwardPlayerNode(node, hero_player);
+      }
+    });
   }
 }
 

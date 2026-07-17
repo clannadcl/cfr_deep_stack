@@ -29,6 +29,19 @@ void ExpectNear(float actual, float expected, const char* message) {
   }
 }
 
+void ExpectVectorNear(const std::vector<float>& actual,
+                      const std::vector<float>& expected,
+                      const char* message) {
+  if (actual.size() != expected.size()) {
+    throw std::runtime_error(message);
+  }
+  for (std::size_t index = 0; index < actual.size(); ++index) {
+    if (std::fabs(actual[index] - expected[index]) > 1e-4f) {
+      throw std::runtime_error(message);
+    }
+  }
+}
+
 template <typename Fn>
 void ExpectInvalidArgument(Fn fn, const char* message) {
   try {
@@ -269,6 +282,37 @@ int main() {
         (void)bad_solver;
       },
       "null setup should be invalid");
+
+  {
+    auto threaded_setup =
+        MakeSetup(PokerCards("AsKdQh2c3d"), 10.0f, {10.0f, 10.0f},
+                  {0.0f, 0.0f}, {0.0f, 0.0f}, /*current_player=*/0,
+                  /*last_aggressor=*/0, /*raise_count=*/0);
+    PokerCfrSolver single_thread_solver{
+        PokerCfrSolver::Args(threaded_setup, /*num_threads=*/1)};
+    PokerCfrSolver two_thread_solver{
+        PokerCfrSolver::Args(threaded_setup, /*num_threads=*/2)};
+    Expect(single_thread_solver.NumThreads() == 1,
+           "single-thread solver thread count mismatch");
+    Expect(two_thread_solver.NumThreads() == 2,
+           "two-thread solver thread count mismatch");
+
+    single_thread_solver.RunIteration();
+    two_thread_solver.RunIteration();
+
+    ExpectVectorNear(two_thread_solver.Storage().StrategyData(),
+                     single_thread_solver.Storage().StrategyData(),
+                     "threaded strategy data mismatch");
+    ExpectVectorNear(two_thread_solver.Storage().RegretData(),
+                     single_thread_solver.Storage().RegretData(),
+                     "threaded regret data mismatch");
+    ExpectVectorNear(two_thread_solver.Storage().CfvData(),
+                     single_thread_solver.Storage().CfvData(),
+                     "threaded cfv data mismatch");
+    ExpectVectorNear(two_thread_solver.Storage().SumStrategyData(),
+                     single_thread_solver.Storage().SumStrategyData(),
+                     "threaded sum strategy data mismatch");
+  }
 
   {
     auto air_vs_nuts_setup =

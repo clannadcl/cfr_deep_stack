@@ -42,9 +42,11 @@ class PokerCfrSolver {
   };
 
   struct Args {
-    explicit Args(std::shared_ptr<game::poker::SubgameSetup> setup);
+    explicit Args(std::shared_ptr<game::poker::SubgameSetup> setup,
+                  int num_threads = 0);
 
     std::shared_ptr<game::poker::SubgameSetup> setup;
+    int num_threads = 0;
   };
 
   explicit PokerCfrSolver(const Args& args);
@@ -57,6 +59,7 @@ class PokerCfrSolver {
   std::vector<float> AverageStrategyData(float epsilon = 1e-12f) const;
 
   const game::poker::PokerTree& Tree() const;
+  int NumThreads() const;
   CfrStorage& Storage();
   const CfrStorage& Storage() const;
   const std::vector<int>& TerminalNodeIds() const;
@@ -88,9 +91,11 @@ class PokerCfrSolver {
   game::poker::SevenCardLookupTable evaluator_;
   game::poker::TerminalCfvCalculator terminal_cfv_calculator_;
   std::vector<const game::poker::IsomorphicMapping*> node_mappings_;
+  std::vector<std::vector<int>> node_ids_by_depth_;
   std::vector<int> terminal_node_ids_;
   std::vector<int> reverse_node_ids_;
   std::unordered_map<int, IsoTransition> chance_transitions_by_child_;
+  int num_threads_ = 1;
 };
 
 }  // namespace fisher::algorithm
