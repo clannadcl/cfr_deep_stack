@@ -1,6 +1,7 @@
 #include "algorithm/poker_cfr_solver.h"
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <cstddef>
@@ -17,6 +18,38 @@
 
 namespace fisher::algorithm {
 namespace {
+
+struct EvRawHandEntry {
+  int iso_index = -1;
+  int high_card = 0;
+  int low_card = 0;
+  double iso_normalization = 0.0;
+};
+
+struct EvReachStats {
+  double total = 0.0;
+  std::array<double, game::poker::GameBasic::kDeckSize> by_card{};
+  std::array<std::array<double, game::poker::GameBasic::kDeckSize>,
+             game::poker::GameBasic::kDeckSize>
+      by_card_pair{};
+
+  void Add(const EvRawHandEntry& hand, double reach) {
+    total += reach;
+    by_card[static_cast<std::size_t>(hand.high_card)] += reach;
+    by_card[static_cast<std::size_t>(hand.low_card)] += reach;
+    by_card_pair[static_cast<std::size_t>(hand.high_card)]
+                [static_cast<std::size_t>(hand.low_card)] += reach;
+    by_card_pair[static_cast<std::size_t>(hand.low_card)]
+                [static_cast<std::size_t>(hand.high_card)] += reach;
+  }
+
+  double Excluding(const EvRawHandEntry& hand) const {
+    return total - by_card[static_cast<std::size_t>(hand.high_card)] -
+           by_card[static_cast<std::size_t>(hand.low_card)] +
+           by_card_pair[static_cast<std::size_t>(hand.high_card)]
+                       [static_cast<std::size_t>(hand.low_card)];
+  }
+};
 
 void ValidatePlayer(int player) {
   if (player < 0 || player >= game::poker::GameBasic::kNumPlayers) {
@@ -47,6 +80,52 @@ int ResolveThreadCount(int requested_threads) {
   }
   const unsigned int hardware_threads = std::thread::hardware_concurrency();
   return std::max(1, static_cast<int>(hardware_threads));
+}
+
+std::vector<EvRawHandEntry> BuildEvRawHandEntries(
+    const game::poker::GameBasic& game_basic,
+    const game::poker::IsomorphicMapping& mapping) {
+  std::vector<EvRawHandEntry> entries;
+  entries.reserve(game::poker::GameBasic::kNumHands);
+  for (int raw_index = 0; raw_index < game::poker::GameBasic::kNumHands;
+       ++raw_index) {
+    const int iso_index = mapping.RawToIso(raw_index);
+    if (iso_index == game::poker::IsomorphicMapping::kInvalidIsoIndex) {
+      continue;
+    }
+    const game::poker::PokerHand& hand = game_basic.HandFromIndex(raw_index);
+    entries.push_back(EvRawHandEntry{
+        iso_index,
+        hand.HighCard().Value(),
+        hand.LowCard().Value(),
+        1.0 / static_cast<double>(mapping.RawHandCount(iso_index)),
+    });
+  }
+  return entries;
+}
+
+std::vector<float> ComputeEvValidMass(
+    const std::vector<EvRawHandEntry>& hands,
+    const game::poker::IsomorphicMapping& mapping,
+    const std::vector<float>& opponent_reach) {
+  EvReachStats opponent_stats;
+  for (const EvRawHandEntry& hand : hands) {
+    const double iso_reach =
+        opponent_reach[static_cast<std::size_t>(hand.iso_index)];
+    if (iso_reach == 0.0) {
+      continue;
+    }
+    opponent_stats.Add(hand, iso_reach * hand.iso_normalization);
+  }
+
+  std::vector<float> valid_mass(
+      static_cast<std::size_t>(mapping.NumIsoHands()), 0.0f);
+  for (const EvRawHandEntry& hand : hands) {
+    valid_mass[static_cast<std::size_t>(hand.iso_index)] +=
+        static_cast<float>(opponent_stats.Excluding(hand) *
+                           hand.iso_normalization);
+  }
+  return valid_mass;
 }
 
 template <typename Fn>
@@ -176,6 +255,7 @@ PokerCfrSolver::PokerCfrSolver(const Args& args)
 }
 
 void PokerCfrSolver::RunIteration() {
+  average_finalized_ = false;
   RunHeroPass(0);
   RunHeroPass(1);
 }
@@ -192,6 +272,7 @@ PokerCfrSolver::HeroPassProfile PokerCfrSolver::RunHeroPassProfiled(
   };
 
   ValidatePlayer(hero_player);
+  average_finalized_ = false;
   const auto total_begin = Clock::now();
 
   const auto initialize_begin = Clock::now();
@@ -218,6 +299,49 @@ PokerCfrSolver::HeroPassProfile PokerCfrSolver::RunHeroPassProfiled(
   profile.backward_update_ms = elapsed_ms(backward_begin, backward_end);
   profile.total_ms = elapsed_ms(total_begin, backward_end);
   return profile;
+}
+
+void PokerCfrSolver::FinalizeAverageStrategy(float average_epsilon) {
+  if (average_epsilon <= 0.0f) {
+    throw std::invalid_argument("Average strategy epsilon must be positive");
+  }
+
+  InitializeRootReach();
+  for (const std::vector<int>& level : node_ids_by_depth_) {
+    ParallelFor(level.size(), num_threads_, [&](std::size_t index) {
+      const game::poker::PokerTreeNode& node = tree_.Node(level[index]);
+      if (node.node_state->IsTerminal()) {
+        return;
+      }
+      if (node.node_state->ActorPlayer() ==
+          game::poker::NodeState::kChancePlayer) {
+        PropagateChanceReach(node);
+      } else {
+        PropagateAveragePlayerReach(node, average_epsilon);
+      }
+    });
+  }
+
+  ComputeTerminalCfvs();
+
+  for (auto level_it = node_ids_by_depth_.rbegin();
+       level_it != node_ids_by_depth_.rend(); ++level_it) {
+    const std::vector<int>& level = *level_it;
+    ParallelFor(level.size(), num_threads_, [&](std::size_t index) {
+      const game::poker::PokerTreeNode& node = tree_.Node(level[index]);
+      if (node.node_state->IsTerminal()) {
+        return;
+      }
+      if (node.node_state->ActorPlayer() ==
+          game::poker::NodeState::kChancePlayer) {
+        BackwardChanceNode(node);
+      } else {
+        BackwardAveragePlayerNode(node, average_epsilon);
+      }
+    });
+  }
+
+  average_finalized_ = true;
 }
 
 std::vector<float> PokerCfrSolver::CurrentStrategyData() const {
@@ -250,6 +374,71 @@ std::vector<float> PokerCfrSolver::AverageStrategyData(float epsilon) const {
     }
   }
   return average;
+}
+
+float PokerCfrSolver::AverageStrategyAt(int node_id, int action_index,
+                                        int hand_index, float epsilon) const {
+  if (epsilon <= 0.0f) {
+    throw std::invalid_argument("Average strategy epsilon must be positive");
+  }
+  const NodeCfrLayout& layout = storage_.Layout(node_id);
+  if (action_index < 0 || action_index >= layout.num_actions) {
+    throw std::invalid_argument("Average strategy action index is out of range");
+  }
+  if (hand_index < 0 || hand_index >= layout.num_hands) {
+    throw std::invalid_argument("Average strategy hand index is out of range");
+  }
+
+  float denominator = 0.0f;
+  for (int action = 0; action < layout.num_actions; ++action) {
+    denominator += storage_.SumStrategyAt(node_id, action, hand_index) +
+                   epsilon;
+  }
+  return (storage_.SumStrategyAt(node_id, action_index, hand_index) +
+          epsilon) /
+         denominator;
+}
+
+PokerCfrSolver::NodeEvDetail PokerCfrSolver::NodeEv(
+    int node_id, int player, float mass_epsilon) const {
+  if (!average_finalized_) {
+    throw std::invalid_argument(
+        "Node EV requires FinalizeAverageStrategy first");
+  }
+  if (mass_epsilon <= 0.0f) {
+    throw std::invalid_argument("Node EV mass epsilon must be positive");
+  }
+  tree_.Node(node_id);
+  ValidatePlayer(player);
+
+  NodeEvDetail detail;
+  detail.node_id = node_id;
+  detail.player = player;
+  detail.cfv.resize(static_cast<std::size_t>(storage_.NumHands(node_id)));
+  detail.valid_mass = ValidMassVector(node_id, player);
+  detail.hand_ev.assign(detail.cfv.size(), 0.0f);
+
+  double numerator = 0.0;
+  double denominator = 0.0;
+  for (int hand = 0; hand < storage_.NumHands(node_id); ++hand) {
+    const std::size_t hand_index = static_cast<std::size_t>(hand);
+    detail.cfv[hand_index] = storage_.CfvAt(node_id, player, hand);
+    if (detail.valid_mass[hand_index] > mass_epsilon) {
+      detail.hand_ev[hand_index] =
+          detail.cfv[hand_index] / detail.valid_mass[hand_index];
+    }
+    const double own_reach = storage_.ReachAt(node_id, player, hand);
+    numerator += own_reach * static_cast<double>(detail.cfv[hand_index]);
+    denominator +=
+        own_reach * static_cast<double>(detail.valid_mass[hand_index]);
+  }
+
+  detail.range_mass = static_cast<float>(denominator);
+  detail.range_ev =
+      denominator > static_cast<double>(mass_epsilon)
+          ? static_cast<float>(numerator / denominator)
+          : 0.0f;
+  return detail;
 }
 
 const game::poker::PokerTree& PokerCfrSolver::Tree() const { return tree_; }
@@ -388,6 +577,20 @@ void PokerCfrSolver::PropagatePlayerReach(
   }
 }
 
+void PokerCfrSolver::PropagateAveragePlayerReach(
+    const game::poker::PokerTreeNode& node, float average_epsilon) {
+  const int actor = node.node_state->ActorPlayer();
+  const NodeCfrLayout& layout = storage_.Layout(node.node_id);
+  for (int action = 0; action < layout.num_actions; ++action) {
+    const int child_id = tree_.ChildNodeIdAt(node.node_id, action);
+    for (int hand = 0; hand < layout.num_hands; ++hand) {
+      storage_.ReachAt(child_id, actor, hand) =
+          storage_.ReachAt(node.node_id, actor, hand) *
+          AverageStrategyAt(node.node_id, action, hand, average_epsilon);
+    }
+  }
+}
+
 void PokerCfrSolver::PropagateChanceReach(
     const game::poker::PokerTreeNode& node) {
   for (int child_index = 0; child_index < node.num_children; ++child_index) {
@@ -505,6 +708,30 @@ void PokerCfrSolver::BackwardPlayerNode(
   UpdateStrategyFromRegret(node.node_id);
 }
 
+void PokerCfrSolver::BackwardAveragePlayerNode(
+    const game::poker::PokerTreeNode& node, float average_epsilon) {
+  const int actor = node.node_state->ActorPlayer();
+  const NodeCfrLayout& layout = storage_.Layout(node.node_id);
+
+  for (int player = 0; player < game::poker::GameBasic::kNumPlayers;
+       ++player) {
+    for (int hand = 0; hand < layout.num_hands; ++hand) {
+      double value = 0.0;
+      for (int action = 0; action < layout.num_actions; ++action) {
+        const int child_id = tree_.ChildNodeIdAt(node.node_id, action);
+        const double child_value =
+            storage_.CfvAt(child_id, player, hand);
+        value += player == actor
+                     ? static_cast<double>(AverageStrategyAt(
+                           node.node_id, action, hand, average_epsilon)) *
+                           child_value
+                     : child_value;
+      }
+      storage_.CfvAt(node.node_id, player, hand) = static_cast<float>(value);
+    }
+  }
+}
+
 void PokerCfrSolver::UpdateStrategyFromRegret(int node_id) {
   const NodeCfrLayout& layout = storage_.Layout(node_id);
   for (int hand = 0; hand < layout.num_hands; ++hand) {
@@ -525,6 +752,17 @@ void PokerCfrSolver::UpdateStrategyFromRegret(int node_id) {
           positive_sum;
     }
   }
+}
+
+std::vector<float> PokerCfrSolver::ValidMassVector(int node_id,
+                                                   int player) const {
+  tree_.Node(node_id);
+  ValidatePlayer(player);
+  const game::poker::IsomorphicMapping& mapping =
+      *node_mappings_[static_cast<std::size_t>(node_id)];
+  const std::vector<EvRawHandEntry> hands =
+      BuildEvRawHandEntries(setup_->BasicGame(), mapping);
+  return ComputeEvValidMass(hands, mapping, ReachVector(node_id, 1 - player));
 }
 
 std::vector<float> PokerCfrSolver::ReachVector(int node_id, int player) const {

@@ -29,6 +29,12 @@ void ExpectNear(float actual, float expected, const char* message) {
   }
 }
 
+void ExpectFinite(float value, const char* message) {
+  if (!std::isfinite(value)) {
+    throw std::runtime_error(message);
+  }
+}
+
 void ExpectVectorNear(const std::vector<float>& actual,
                       const std::vector<float>& expected,
                       const char* message) {
@@ -323,6 +329,9 @@ int main() {
     PokerCfrSolver air_vs_nuts_solver{
         PokerCfrSolver::Args(air_vs_nuts_setup)};
     RunIterations(&air_vs_nuts_solver, 200);
+    ExpectInvalidArgument(
+        [&] { (void)air_vs_nuts_solver.NodeEv(0, 0); },
+        "node EV should require average strategy finalize");
 
     const auto& solver_tree = air_vs_nuts_solver.Tree();
     const auto& solver_storage = air_vs_nuts_solver.Storage();
@@ -343,6 +352,48 @@ int main() {
     Expect(AverageActionProbability(solver_storage, avg, bet_node_id,
                                     call_index, nuts_hand) > 0.99f,
            "river pure nuts should call air shove");
+
+    const std::vector<float> current_strategy_before_finalize =
+        air_vs_nuts_solver.Storage().StrategyData();
+    air_vs_nuts_solver.FinalizeAverageStrategy();
+    ExpectVectorNear(air_vs_nuts_solver.Storage().StrategyData(),
+                     current_strategy_before_finalize,
+                     "finalize should not overwrite current strategy");
+
+    const PokerCfrSolver::NodeEvDetail player0_ev =
+        air_vs_nuts_solver.NodeEv(0, 0);
+    const PokerCfrSolver::NodeEvDetail player1_ev =
+        air_vs_nuts_solver.NodeEv(0, 1);
+    Expect(player0_ev.node_id == 0 && player0_ev.player == 0,
+           "player 0 node EV identity mismatch");
+    Expect(player1_ev.node_id == 0 && player1_ev.player == 1,
+           "player 1 node EV identity mismatch");
+    Expect(player0_ev.cfv.size() == player0_ev.valid_mass.size(),
+           "node EV cfv and valid mass size mismatch");
+    Expect(player0_ev.cfv.size() == player0_ev.hand_ev.size(),
+           "node EV cfv and hand EV size mismatch");
+    Expect(player0_ev.valid_mass[static_cast<std::size_t>(air_hand)] > 0.0f,
+           "player 0 active hand should have valid mass");
+    Expect(player1_ev.valid_mass[static_cast<std::size_t>(nuts_hand)] > 0.0f,
+           "player 1 active hand should have valid mass");
+    ExpectNear(player0_ev.hand_ev[static_cast<std::size_t>(air_hand)],
+               player0_ev.cfv[static_cast<std::size_t>(air_hand)] /
+                   player0_ev.valid_mass[static_cast<std::size_t>(air_hand)],
+               "player 0 hand EV should equal cfv divided by valid mass");
+    ExpectNear(player1_ev.hand_ev[static_cast<std::size_t>(nuts_hand)],
+               player1_ev.cfv[static_cast<std::size_t>(nuts_hand)] /
+                   player1_ev.valid_mass[static_cast<std::size_t>(nuts_hand)],
+               "player 1 hand EV should equal cfv divided by valid mass");
+    ExpectNear(player0_ev.range_ev,
+               player0_ev.hand_ev[static_cast<std::size_t>(air_hand)],
+               "single-hand player 0 range EV should match hand EV");
+    ExpectNear(player1_ev.range_ev,
+               player1_ev.hand_ev[static_cast<std::size_t>(nuts_hand)],
+               "single-hand player 1 range EV should match hand EV");
+    ExpectFinite(player0_ev.range_ev, "player 0 range EV should be finite");
+    ExpectFinite(player1_ev.range_ev, "player 1 range EV should be finite");
+    Expect(player0_ev.range_mass > 0.0f, "player 0 range mass should be positive");
+    Expect(player1_ev.range_mass > 0.0f, "player 1 range mass should be positive");
   }
 
   {
