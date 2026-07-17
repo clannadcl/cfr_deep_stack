@@ -4,6 +4,7 @@
 #include <array>
 #include <atomic>
 #include <chrono>
+#include <cmath>
 #include <cstddef>
 #include <exception>
 #include <mutex>
@@ -99,6 +100,39 @@ float ResolveTargetExploitability(
     return requested_target;
   }
   return setup->Pot() * 0.001f;
+}
+
+float ValidateFiniteFloat(float value, const char* name) {
+  if (!std::isfinite(value)) {
+    throw std::invalid_argument(name);
+  }
+  return value;
+}
+
+float ValidateNonNegativeFloat(float value, const char* name) {
+  ValidateFiniteFloat(value, name);
+  if (value < 0.0f) {
+    throw std::invalid_argument(name);
+  }
+  return value;
+}
+
+float DcfrDiscount(int iteration, float exponent) {
+  if (iteration <= 0) {
+    throw std::invalid_argument("DCFR iteration must be positive");
+  }
+  const double powered =
+      std::pow(static_cast<double>(iteration), static_cast<double>(exponent));
+  return static_cast<float>(powered / (powered + 1.0));
+}
+
+float DcfrAverageStrategyDiscount(int iteration, float exponent) {
+  if (iteration <= 0) {
+    throw std::invalid_argument("DCFR iteration must be positive");
+  }
+  const double ratio = static_cast<double>(iteration) /
+                       static_cast<double>(iteration + 1);
+  return static_cast<float>(std::pow(ratio, static_cast<double>(exponent)));
 }
 
 std::vector<EvRawHandEntry> BuildEvRawHandEntries(
@@ -225,12 +259,19 @@ void ValidateAdjacentBoardTransition(
 PokerCfrSolver::Args::Args(std::shared_ptr<game::poker::SubgameSetup> setup,
                            int num_threads, int max_iterations,
                            int exploitability_check_interval,
-                           float target_exploitability)
+                           float target_exploitability, bool use_dcfr,
+                           float positive_regret_discount_exponent,
+                           float negative_regret_discount_exponent,
+                           float average_strategy_discount_exponent)
     : setup(std::move(setup)),
       num_threads(num_threads),
       max_iterations(max_iterations),
       exploitability_check_interval(exploitability_check_interval),
-      target_exploitability(target_exploitability) {}
+      target_exploitability(target_exploitability),
+      use_dcfr(use_dcfr),
+      positive_regret_discount_exponent(positive_regret_discount_exponent),
+      negative_regret_discount_exponent(negative_regret_discount_exponent),
+      average_strategy_discount_exponent(average_strategy_discount_exponent) {}
 
 IsoTransition BuildIsoTransition(
     int parent_node_id, int child_node_id,
@@ -282,7 +323,17 @@ PokerCfrSolver::PokerCfrSolver(const Args& args)
           args.exploitability_check_interval,
           "Poker CFR exploitability check interval must be positive")),
       target_exploitability_(
-          ResolveTargetExploitability(setup_, args.target_exploitability)) {
+          ResolveTargetExploitability(setup_, args.target_exploitability)),
+      use_dcfr_(args.use_dcfr),
+      positive_regret_discount_exponent_(ValidateNonNegativeFloat(
+          args.positive_regret_discount_exponent,
+          "DCFR positive regret discount exponent must be non-negative")),
+      negative_regret_discount_exponent_(ValidateFiniteFloat(
+          args.negative_regret_discount_exponent,
+          "DCFR negative regret discount exponent must be finite")),
+      average_strategy_discount_exponent_(ValidateNonNegativeFloat(
+          args.average_strategy_discount_exponent,
+          "DCFR average strategy discount exponent must be non-negative")) {
   BuildNodeCaches();
 }
 
@@ -305,6 +356,7 @@ PokerCfrSolver::HeroPassProfile PokerCfrSolver::RunHeroPassProfiled(
 
   ValidatePlayer(hero_player);
   average_finalized_ = false;
+  RefreshDcfrDiscounts();
   const auto total_begin = Clock::now();
 
   const auto initialize_begin = Clock::now();
@@ -322,6 +374,8 @@ PokerCfrSolver::HeroPassProfile PokerCfrSolver::RunHeroPassProfiled(
   const auto backward_begin = Clock::now();
   BackwardAndUpdate(hero_player);
   const auto backward_end = Clock::now();
+
+  ++hero_pass_count_;
 
   HeroPassProfile profile;
   profile.initialize_root_reach_ms =
@@ -574,6 +628,26 @@ IsoTransition PokerCfrSolver::BuildChanceTransition(int parent_node_id,
   return BuildIsoTransition(parent_node_id, child_node_id, parent, child);
 }
 
+void PokerCfrSolver::RefreshDcfrDiscounts() {
+  if (!use_dcfr_) {
+    current_positive_regret_discount_ = 1.0f;
+    current_negative_regret_discount_ = 1.0f;
+    current_average_strategy_discount_ = 1.0f;
+    return;
+  }
+
+  const int iteration = hero_pass_count_ / game::poker::GameBasic::kNumPlayers +
+                        1;
+  current_positive_regret_discount_ =
+      DcfrDiscount(iteration, positive_regret_discount_exponent_);
+  current_negative_regret_discount_ =
+      negative_regret_discount_exponent_ <= -5.0f
+          ? 0.0f
+          : DcfrDiscount(iteration, negative_regret_discount_exponent_);
+  current_average_strategy_discount_ = DcfrAverageStrategyDiscount(
+      iteration, average_strategy_discount_exponent_);
+}
+
 void PokerCfrSolver::InitializeRootReach() {
   const int root_node_id = tree_.Root().node_id;
   const game::poker::IsomorphicMapping& root_mapping =
@@ -628,6 +702,7 @@ void PokerCfrSolver::PropagatePlayerReach(
   }
 
   if (actor == hero_player) {
+    ApplyAverageStrategyDiscount(node.node_id);
     for (int action = 0; action < layout.num_actions; ++action) {
       for (int hand = 0; hand < layout.num_hands; ++hand) {
         storage_.SumStrategyAt(node.node_id, action, hand) +=
@@ -766,7 +841,40 @@ void PokerCfrSolver::BackwardPlayerNode(
           storage_.CfvAt(node.node_id, actor, hand);
     }
   }
+  ApplyRegretDiscount(node.node_id);
   UpdateStrategyFromRegret(node.node_id);
+}
+
+void PokerCfrSolver::ApplyRegretDiscount(int node_id) {
+  if (!use_dcfr_) {
+    return;
+  }
+
+  const NodeCfrLayout& layout = storage_.Layout(node_id);
+  for (int action = 0; action < layout.num_actions; ++action) {
+    for (int hand = 0; hand < layout.num_hands; ++hand) {
+      float& regret = storage_.RegretAt(node_id, action, hand);
+      if (regret > 0.0f) {
+        regret *= current_positive_regret_discount_;
+      } else if (regret < 0.0f) {
+        regret *= current_negative_regret_discount_;
+      }
+    }
+  }
+}
+
+void PokerCfrSolver::ApplyAverageStrategyDiscount(int node_id) {
+  if (!use_dcfr_) {
+    return;
+  }
+
+  const NodeCfrLayout& layout = storage_.Layout(node_id);
+  for (int action = 0; action < layout.num_actions; ++action) {
+    for (int hand = 0; hand < layout.num_hands; ++hand) {
+      storage_.SumStrategyAt(node_id, action, hand) *=
+          current_average_strategy_discount_;
+    }
+  }
 }
 
 void PokerCfrSolver::BackwardAveragePlayerNode(

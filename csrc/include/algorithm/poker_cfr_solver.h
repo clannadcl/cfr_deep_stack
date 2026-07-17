@@ -56,13 +56,21 @@ class PokerCfrSolver {
     explicit Args(std::shared_ptr<game::poker::SubgameSetup> setup,
                   int num_threads = 0, int max_iterations = 500,
                   int exploitability_check_interval = 50,
-                  float target_exploitability = -1.0f);
+                  float target_exploitability = -1.0f,
+                  bool use_dcfr = true,
+                  float positive_regret_discount_exponent = 1.5f,
+                  float negative_regret_discount_exponent = 0.5f,
+                  float average_strategy_discount_exponent = 2.0f);
 
     std::shared_ptr<game::poker::SubgameSetup> setup;
     int num_threads = 0;
     int max_iterations = 500;
     int exploitability_check_interval = 50;
     float target_exploitability = -1.0f;
+    bool use_dcfr = true;
+    float positive_regret_discount_exponent = 1.5f;
+    float negative_regret_discount_exponent = 0.5f;
+    float average_strategy_discount_exponent = 2.0f;
   };
 
   struct SolveResult {
@@ -100,6 +108,7 @@ class PokerCfrSolver {
   void BuildNodeCaches();
   IsoTransition BuildChanceTransition(int parent_node_id,
                                       int child_node_id) const;
+  void RefreshDcfrDiscounts();
   void InitializeRootReach();
   void ForwardReachAndAccumulateAverage(int hero_player);
   void PropagatePlayerReach(const game::poker::PokerTreeNode& node,
@@ -112,6 +121,8 @@ class PokerCfrSolver {
   void BackwardChanceNode(const game::poker::PokerTreeNode& node);
   void BackwardPlayerNode(const game::poker::PokerTreeNode& node,
                           int hero_player);
+  void ApplyRegretDiscount(int node_id);
+  void ApplyAverageStrategyDiscount(int node_id);
   void BackwardAveragePlayerNode(const game::poker::PokerTreeNode& node,
                                  float average_epsilon);
   void UpdateStrategyFromRegret(int node_id);
@@ -134,6 +145,14 @@ class PokerCfrSolver {
   int max_iterations_ = 500;
   int exploitability_check_interval_ = 50;
   float target_exploitability_ = 0.0f;
+  bool use_dcfr_ = true;
+  float positive_regret_discount_exponent_ = 1.5f;
+  float negative_regret_discount_exponent_ = 0.5f;
+  float average_strategy_discount_exponent_ = 2.0f;
+  int hero_pass_count_ = 0;
+  float current_positive_regret_discount_ = 1.0f;
+  float current_negative_regret_discount_ = 1.0f;
+  float current_average_strategy_discount_ = 1.0f;
   bool average_finalized_ = false;
 };
 

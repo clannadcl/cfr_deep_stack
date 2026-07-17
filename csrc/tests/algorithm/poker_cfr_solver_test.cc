@@ -288,6 +288,28 @@ int main() {
         (void)bad_solver;
       },
       "null setup should be invalid");
+  ExpectInvalidArgument(
+      [&] {
+        PokerCfrSolver bad_solver(PokerCfrSolver::Args(
+            river_setup, /*num_threads=*/1, /*max_iterations=*/500,
+            /*exploitability_check_interval=*/50,
+            /*target_exploitability=*/-1.0f, /*use_dcfr=*/true,
+            /*positive_regret_discount_exponent=*/-1.0f));
+        (void)bad_solver;
+      },
+      "negative DCFR positive exponent should be invalid");
+  ExpectInvalidArgument(
+      [&] {
+        PokerCfrSolver bad_solver(PokerCfrSolver::Args(
+            river_setup, /*num_threads=*/1, /*max_iterations=*/500,
+            /*exploitability_check_interval=*/50,
+            /*target_exploitability=*/-1.0f, /*use_dcfr=*/true,
+            /*positive_regret_discount_exponent=*/1.5f,
+            /*negative_regret_discount_exponent=*/0.5f,
+            /*average_strategy_discount_exponent=*/-1.0f));
+        (void)bad_solver;
+      },
+      "negative DCFR average strategy exponent should be invalid");
 
   {
     auto threaded_setup =
@@ -318,6 +340,111 @@ int main() {
     ExpectVectorNear(two_thread_solver.Storage().SumStrategyData(),
                      single_thread_solver.Storage().SumStrategyData(),
                      "threaded sum strategy data mismatch");
+  }
+
+  {
+    auto vanilla_setup =
+        MakeSetup(PokerCards("AsKdQh2c3d"), 10.0f, {10.0f, 10.0f},
+                  {0.0f, 0.0f}, {0.0f, 0.0f}, /*current_player=*/0,
+                  /*last_aggressor=*/0, /*raise_count=*/0);
+    auto dcfr_setup =
+        MakeSetup(PokerCards("AsKdQh2c3d"), 10.0f, {10.0f, 10.0f},
+                  {0.0f, 0.0f}, {0.0f, 0.0f}, /*current_player=*/0,
+                  /*last_aggressor=*/0, /*raise_count=*/0);
+    PokerCfrSolver vanilla_solver{PokerCfrSolver::Args(
+        vanilla_setup, /*num_threads=*/1, /*max_iterations=*/500,
+        /*exploitability_check_interval=*/50,
+        /*target_exploitability=*/-1.0f, /*use_dcfr=*/false)};
+    PokerCfrSolver dcfr_solver{PokerCfrSolver::Args(
+        dcfr_setup, /*num_threads=*/1, /*max_iterations=*/500,
+        /*exploitability_check_interval=*/50,
+        /*target_exploitability=*/-1.0f, /*use_dcfr=*/true)};
+
+    vanilla_solver.RunHeroPass(0);
+    dcfr_solver.RunHeroPass(0);
+
+    bool compared_non_zero_regret = false;
+    const std::vector<float>& vanilla_regret =
+        vanilla_solver.Storage().RegretData();
+    const std::vector<float>& dcfr_regret = dcfr_solver.Storage().RegretData();
+    Expect(vanilla_regret.size() == dcfr_regret.size(),
+           "DCFR regret storage shape mismatch");
+    for (std::size_t index = 0; index < vanilla_regret.size(); ++index) {
+      if (std::fabs(vanilla_regret[index]) <= 1e-6f) {
+        ExpectNear(dcfr_regret[index], 0.0f,
+                   "zero vanilla regret should stay zero under DCFR");
+        continue;
+      }
+      compared_non_zero_regret = true;
+      ExpectNear(dcfr_regret[index], vanilla_regret[index] * 0.5f,
+                 "first DCFR pass should discount regret by 0.5");
+    }
+    Expect(compared_non_zero_regret,
+           "DCFR regression should compare at least one non-zero regret");
+    ExpectVectorNear(dcfr_solver.Storage().StrategyData(),
+                     vanilla_solver.Storage().StrategyData(),
+                     "first DCFR pass should preserve regret-matching ratios");
+  }
+
+  {
+    auto cfr_plus_like_setup =
+        MakeSetup(PokerCards("AsKdQh2c3d"), 10.0f, {10.0f, 10.0f},
+                  {0.0f, 0.0f}, {0.0f, 0.0f}, /*current_player=*/0,
+                  /*last_aggressor=*/0, /*raise_count=*/0);
+    PokerCfrSolver cfr_plus_like_solver{PokerCfrSolver::Args(
+        cfr_plus_like_setup, /*num_threads=*/1, /*max_iterations=*/500,
+        /*exploitability_check_interval=*/50,
+        /*target_exploitability=*/-1.0f, /*use_dcfr=*/true,
+        /*positive_regret_discount_exponent=*/1.5f,
+        /*negative_regret_discount_exponent=*/-5.0f)};
+
+    cfr_plus_like_solver.RunHeroPass(0);
+    for (float regret : cfr_plus_like_solver.Storage().RegretData()) {
+      Expect(regret >= -1e-6f,
+             "beta <= -5 should clear negative cumulative regrets");
+    }
+  }
+
+  {
+    auto no_average_discount_setup =
+        MakeSetup(PokerCards("AsKdQh2c3d"), 10.0f, {10.0f, 10.0f},
+                  {0.0f, 0.0f}, {0.0f, 0.0f}, /*current_player=*/0,
+                  /*last_aggressor=*/0, /*raise_count=*/0);
+    auto average_discount_setup =
+        MakeSetup(PokerCards("AsKdQh2c3d"), 10.0f, {10.0f, 10.0f},
+                  {0.0f, 0.0f}, {0.0f, 0.0f}, /*current_player=*/0,
+                  /*last_aggressor=*/0, /*raise_count=*/0);
+    PokerCfrSolver no_average_discount_solver{PokerCfrSolver::Args(
+        no_average_discount_setup, /*num_threads=*/1,
+        /*max_iterations=*/500, /*exploitability_check_interval=*/50,
+        /*target_exploitability=*/-1.0f, /*use_dcfr=*/true,
+        /*positive_regret_discount_exponent=*/1.5f,
+        /*negative_regret_discount_exponent=*/0.5f,
+        /*average_strategy_discount_exponent=*/0.0f)};
+    PokerCfrSolver average_discount_solver{PokerCfrSolver::Args(
+        average_discount_setup, /*num_threads=*/1, /*max_iterations=*/500,
+        /*exploitability_check_interval=*/50,
+        /*target_exploitability=*/-1.0f, /*use_dcfr=*/true,
+        /*positive_regret_discount_exponent=*/1.5f,
+        /*negative_regret_discount_exponent=*/0.5f,
+        /*average_strategy_discount_exponent=*/2.0f)};
+
+    no_average_discount_solver.RunIteration();
+    average_discount_solver.RunIteration();
+    no_average_discount_solver.RunIteration();
+    average_discount_solver.RunIteration();
+
+    const float no_discount_sum =
+        no_average_discount_solver.Storage().SumStrategyAt(0, 0, 0) +
+        no_average_discount_solver.Storage().SumStrategyAt(0, 1, 0);
+    const float discounted_sum =
+        average_discount_solver.Storage().SumStrategyAt(0, 0, 0) +
+        average_discount_solver.Storage().SumStrategyAt(0, 1, 0);
+    Expect(discounted_sum < no_discount_sum,
+           "gamma should discount cumulative average strategy before adding");
+    ExpectVectorNear(average_discount_solver.Storage().StrategyData(),
+                     no_average_discount_solver.Storage().StrategyData(),
+                     "gamma should not change current regret-matched strategy");
   }
 
   {
