@@ -280,6 +280,18 @@ if(FISHER_BUILD_TESTS)
   add_test(NAME terminal_cfv_calculator_test
            COMMAND terminal_cfv_calculator_test)
 
+  add_executable(terminal_cfv_benchmark_test
+    csrc/tests/game/poker/terminal_cfv_benchmark_test.cc
+  )
+
+  target_link_libraries(terminal_cfv_benchmark_test
+    PRIVATE
+      fisher_core
+  )
+
+  add_test(NAME terminal_cfv_benchmark_test
+           COMMAND terminal_cfv_benchmark_test)
+
   add_executable(terminal_win_prob_matrix_test
     csrc/tests/game/poker/terminal_win_prob_matrix_test.cc
   )
