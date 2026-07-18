@@ -158,15 +158,29 @@ BuildFlopStrengths(const PokerCards& board,
   return strengths;
 }
 
+std::vector<uint16_t> BuildRiverStrengths(
+    const PokerCards& board, const std::vector<RawHandEntry>& hands,
+    const SevenCardLookupTable& evaluator) {
+  std::vector<uint16_t> strengths(GameBasic::kNumHands, kInvalidStrength);
+  for (const RawHandEntry& hand : hands) {
+    const std::array<uint8_t, kSevenCards> cards =
+        BaseSevenCards(board, hand);
+    strengths[static_cast<std::size_t>(hand.raw_index)] =
+        evaluator.Evaluate7(cards.data());
+  }
+  return strengths;
+}
+
 }  // namespace
 
 TerminalWinProbMatrix::TerminalWinProbMatrix(
     const GameBasic& game_basic, const PokerCards& board,
     const IsomorphicMapping& mapping, const SevenCardLookupTable& evaluator)
     : board_(board), round_(game_basic.BoardRound(board)) {
-  if (round_ != PokerRound::kFlop && round_ != PokerRound::kTurn) {
+  if (round_ != PokerRound::kFlop && round_ != PokerRound::kTurn &&
+      round_ != PokerRound::kRiver) {
     throw std::invalid_argument(
-        "TerminalWinProbMatrix only supports flop or turn");
+        "TerminalWinProbMatrix only supports postflop boards");
   }
   if (board_.ToString() != mapping.RawBoard().ToString()) {
     throw std::invalid_argument(
@@ -219,6 +233,44 @@ void TerminalWinProbMatrix::Build(
   const std::vector<RawHandEntry> hands =
       BuildRawHandEntries(game_basic, mapping);
   const std::vector<uint8_t> runout_cards = RemainingBoardCards(board_);
+
+  if (round_ == PokerRound::kRiver) {
+    const std::vector<uint16_t> strengths =
+        BuildRiverStrengths(board_, hands, evaluator);
+    const std::vector<std::vector<RawHandEntry>> buckets =
+        BuildIsoBuckets(num_iso_hands_, hands);
+    for (int hero_iso = 0; hero_iso < num_iso_hands_; ++hero_iso) {
+      const RawHandEntry& hero =
+          buckets[static_cast<std::size_t>(hero_iso)].front();
+      const uint16_t hero_strength =
+          strengths[static_cast<std::size_t>(hero.raw_index)];
+      if (hero_strength == kInvalidStrength) {
+        throw std::runtime_error("Missing river hand strength");
+      }
+      for (int opponent_iso = 0; opponent_iso < num_iso_hands_;
+           ++opponent_iso) {
+        double bucket_win_prob = 0.0;
+        for (const RawHandEntry& opponent :
+             buckets[static_cast<std::size_t>(opponent_iso)]) {
+          if (hero.CollidesWith(opponent)) {
+            continue;
+          }
+          const uint16_t opponent_strength =
+              strengths[static_cast<std::size_t>(opponent.raw_index)];
+          if (opponent_strength == kInvalidStrength) {
+            throw std::runtime_error("Missing river opponent hand strength");
+          }
+          bucket_win_prob +=
+              static_cast<double>(hero_strength > opponent_strength) *
+              static_cast<double>(opponent.normalization);
+        }
+        win_prob_[static_cast<std::size_t>(hero_iso * num_iso_hands_ +
+                                          opponent_iso)] =
+            static_cast<float>(bucket_win_prob);
+      }
+    }
+    return;
+  }
 
   if (round_ == PokerRound::kTurn) {
     const auto strengths =

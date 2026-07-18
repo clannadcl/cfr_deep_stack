@@ -137,7 +137,11 @@ float ReferenceRawBlockWinProb(
   int runouts = 0;
   auto hero_cards = TestBaseSevenCards(board, hero);
   auto opponent_cards = TestBaseSevenCards(board, opponent);
-  if (board.Size() == 4) {
+  if (board.Size() == 5) {
+    wins += evaluator.Evaluate7(hero_cards.data()) >
+            evaluator.Evaluate7(opponent_cards.data());
+    ++runouts;
+  } else if (board.Size() == 4) {
     for (uint8_t river : runout_cards) {
       if (hero.Contains(river) || opponent.Contains(river)) {
         continue;
@@ -171,7 +175,8 @@ float ReferenceRawBlockWinProb(
       }
     }
   } else {
-    throw std::runtime_error("reference matrix only supports flop or turn");
+    throw std::runtime_error(
+        "reference matrix only supports postflop boards");
   }
   if (runouts <= 0) {
     throw std::runtime_error("reference matrix pair has no runouts");
@@ -328,10 +333,27 @@ int main() {
     const PokerCards river("AcAdAhAs2c");
     IsomorphicMapping mapping(
         game_basic, river,
-        PossibleHands(game_basic, {"KcKd", "QcQd"}));
-    ExpectInvalidArgument(
-        [&] { TerminalWinProbMatrix(game_basic, river, mapping, evaluator); },
-        "river hand equity matrix should be invalid");
+        PossibleHands(game_basic, {"KcKd", "QcQd", "KhQh"}));
+    TerminalWinProbMatrix matrix(game_basic, river, mapping, evaluator);
+
+    const int kings = IsoIndex(game_basic, mapping, "KcKd");
+    const int queens = IsoIndex(game_basic, mapping, "QcQd");
+    const int king_queen = IsoIndex(game_basic, mapping, "KhQh");
+    ExpectNear(matrix.WinProb(kings, queens), 1.0f,
+               "river KK should beat QQ");
+    ExpectNear(matrix.WinProb(queens, kings), 0.0f,
+               "river QQ should not beat KK");
+    ExpectNear(matrix.EquityDelta(kings, queens), 1.0f,
+               "river KK vs QQ delta mismatch");
+    ExpectNear(matrix.EquityDelta(king_queen, kings), 0.0f,
+               "river chopped hands should have zero delta");
+  }
+
+  {
+    ExpectMatchesReferenceFullBlock(
+        game_basic, PokerCards("2c7dJhQsAc"),
+        {"KdKh", "KsKc", "TdTh", "9c9d", "8s8h", "3c3d"}, evaluator,
+        "river optimized matrix should match full raw block averaging");
   }
 
   return 0;

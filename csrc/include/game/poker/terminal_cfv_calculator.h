@@ -25,34 +25,35 @@ class TerminalCfvCalculator {
                                const std::vector<float>& opponent_reach);
   void CalculateInto(const NodeState& node, int player,
                      const IsomorphicMapping& mapping,
-                     const float* opponent_reach, int opponent_reach_size,
-                     float* out_cfv);
+                     const float* opponent_reach, float* out_cfv);
   struct BatchItem {
     const NodeState* node = nullptr;
     int player = -1;
     const IsomorphicMapping* mapping = nullptr;
     const float* opponent_reach = nullptr;
-    int opponent_reach_size = 0;
     float* out_cfv = nullptr;
   };
 
   void CalculateRunoutShowdownBatch(const std::vector<BatchItem>& items);
+  void CalculateRiverShowdownBatch(const std::vector<BatchItem>& items);
+  void CalculateRiverShowdownScanBatch(const std::vector<BatchItem>& items);
 
  private:
   struct RawHandsCache;
   struct RunoutShowdownCache;
   struct RiverShowdownCache;
 
-  void ValidateInput(const NodeState& node, int player,
-                     const IsomorphicMapping& mapping,
-                     const float* opponent_reach,
-                     int opponent_reach_size) const;
   void CalculateFold(const NodeState& node, int player,
                      const IsomorphicMapping& mapping,
                      const float* opponent_reach, float* out_cfv);
   void CalculateRiverShowdown(const NodeState& node, int player,
                               const IsomorphicMapping& mapping,
                               const float* opponent_reach, float* out_cfv);
+  void CalculateRiverShowdownWithCache(const NodeState& node, int player,
+                                       int num_iso_hands,
+                                       const RiverShowdownCache& cache,
+                                       const float* opponent_reach,
+                                       float* out_cfv);
   void CalculateRunoutShowdown(const NodeState& node, int player,
                                const IsomorphicMapping& mapping,
                                const float* opponent_reach, float* out_cfv);

@@ -107,6 +107,12 @@ class PokerCfrSolver {
 
  private:
   class ThreadPool;
+  struct TerminalWorkItem {
+    int node_id = -1;
+    const game::poker::NodeState* node_state = nullptr;
+    const game::poker::IsomorphicMapping* mapping = nullptr;
+  };
+  using TerminalWorkBatch = std::vector<TerminalWorkItem>;
 
   void BuildNodeCaches();
   IsoTransition BuildChanceTransition(int parent_node_id,
@@ -142,6 +148,10 @@ class PokerCfrSolver {
   std::vector<const game::poker::IsomorphicMapping*> node_mappings_;
   std::vector<std::vector<int>> node_ids_by_depth_;
   std::vector<int> terminal_node_ids_;
+  std::vector<TerminalWorkItem> fold_terminal_items_;
+  std::vector<TerminalWorkBatch> river_matrix_terminal_batches_;
+  std::vector<TerminalWorkBatch> river_scan_terminal_batches_;
+  std::vector<TerminalWorkBatch> runout_terminal_batches_;
   std::vector<int> reverse_node_ids_;
   std::unordered_map<int, IsoTransition> chance_transitions_by_child_;
   int num_threads_ = 1;

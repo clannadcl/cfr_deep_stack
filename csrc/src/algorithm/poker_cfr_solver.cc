@@ -24,6 +24,7 @@ namespace {
 
 constexpr float kEvMassEpsilon = 1e-10f;
 constexpr std::size_t kTerminalCfvBatchSize = 64;
+constexpr std::size_t kRiverTerminalCfvBatchSize = 2;
 
 struct EvRawHandEntry {
   int iso_index = -1;
@@ -654,8 +655,18 @@ void PokerCfrSolver::BuildNodeCaches() {
   node_mappings_.resize(static_cast<std::size_t>(tree_.NumNodes()), nullptr);
   node_ids_by_depth_.clear();
   terminal_node_ids_.clear();
+  fold_terminal_items_.clear();
+  river_matrix_terminal_batches_.clear();
+  river_scan_terminal_batches_.clear();
+  runout_terminal_batches_.clear();
   reverse_node_ids_.clear();
   chance_transitions_by_child_.clear();
+
+  std::unordered_map<std::string, TerminalWorkBatch> river_matrix_items_by_key;
+  std::unordered_map<std::string, TerminalWorkBatch> river_scan_items_by_key;
+  std::unordered_map<std::string, TerminalWorkBatch> runout_items_by_key;
+  const bool use_river_matrix_batch =
+      setup_->Street() == game::poker::PokerRound::kRiver;
 
   for (const game::poker::PokerTreeNode& node : tree_.Nodes()) {
     if (node.depth < 0) {
@@ -671,8 +682,55 @@ void PokerCfrSolver::BuildNodeCaches() {
     reverse_node_ids_.push_back(node.node_id);
     if (node.node_state->IsTerminal()) {
       terminal_node_ids_.push_back(node.node_id);
+      const game::poker::IsomorphicMapping& mapping =
+          *node_mappings_[static_cast<std::size_t>(node.node_id)];
+      TerminalWorkItem item{
+          node.node_id,
+          node.node_state.get(),
+          &mapping,
+      };
+      if (node.node_state->Status() ==
+          game::poker::TerminalStatus::kFoldTerminal) {
+        fold_terminal_items_.push_back(item);
+      } else if (node.node_state->Street() == game::poker::PokerRound::kRiver) {
+        const std::string key = mapping.RawBoard().ToString() + "#" +
+                                std::to_string(mapping.NumIsoHands());
+        if (use_river_matrix_batch) {
+          river_matrix_items_by_key[key].push_back(item);
+        } else {
+          river_scan_items_by_key[key].push_back(item);
+        }
+      } else {
+        const std::string key = mapping.RawBoard().ToString() + "#" +
+                                std::to_string(mapping.NumIsoHands());
+        runout_items_by_key[key].push_back(item);
+      }
     }
   }
+
+  const auto append_batches = [](const auto& items_by_key,
+                                 std::size_t batch_limit,
+                                 std::vector<TerminalWorkBatch>* batches) {
+    for (const auto& entry : items_by_key) {
+      const TerminalWorkBatch& items = entry.second;
+      for (std::size_t offset = 0; offset < items.size();
+           offset += batch_limit) {
+        const std::size_t batch_size =
+            std::min(batch_limit, items.size() - offset);
+        batches->emplace_back(items.begin() +
+                                  static_cast<std::ptrdiff_t>(offset),
+                              items.begin() +
+                                  static_cast<std::ptrdiff_t>(offset +
+                                                              batch_size));
+      }
+    }
+  };
+  append_batches(river_matrix_items_by_key, kRiverTerminalCfvBatchSize,
+                 &river_matrix_terminal_batches_);
+  append_batches(river_scan_items_by_key, kRiverTerminalCfvBatchSize,
+                 &river_scan_terminal_batches_);
+  append_batches(runout_items_by_key, kTerminalCfvBatchSize,
+                 &runout_terminal_batches_);
 
   for (const game::poker::PokerTreeNode& node : tree_.Nodes()) {
     if (node.node_state->ActorPlayer() ==
@@ -822,78 +880,57 @@ void PokerCfrSolver::PropagateChanceReach(
 
 void PokerCfrSolver::ComputeTerminalCfvs(int player) {
   ValidatePlayer(player);
-  std::vector<int> direct_terminal_node_ids;
-  std::unordered_map<std::string, std::vector<int>> runout_node_ids_by_key;
-  direct_terminal_node_ids.reserve(terminal_node_ids_.size());
-  for (int node_id : terminal_node_ids_) {
-    const game::poker::PokerTreeNode& node = tree_.Node(node_id);
-    if (node.node_state->Status() ==
-            game::poker::TerminalStatus::kShowdownTerminal &&
-        node.node_state->Street() != game::poker::PokerRound::kRiver) {
-      const game::poker::IsomorphicMapping& mapping =
-          *node_mappings_[static_cast<std::size_t>(node_id)];
-      const std::string key = mapping.RawBoard().ToString() + "#" +
-                              std::to_string(mapping.NumIsoHands());
-      runout_node_ids_by_key[key].push_back(node_id);
-    } else {
-      direct_terminal_node_ids.push_back(node_id);
+  const auto build_batch_items = [&](const TerminalWorkBatch& batch) {
+    std::vector<game::poker::TerminalCfvCalculator::BatchItem> items;
+    items.reserve(batch.size());
+    for (const TerminalWorkItem& item : batch) {
+      items.push_back(game::poker::TerminalCfvCalculator::BatchItem{
+          item.node_state,
+          player,
+          item.mapping,
+          storage_.ReachBlock(item.node_id, 1 - player),
+          storage_.CfvBlock(item.node_id, player),
+      });
     }
-  }
+    return items;
+  };
 
-  thread_pool_->ParallelFor(direct_terminal_node_ids.size(),
+  thread_pool_->ParallelFor(fold_terminal_items_.size(),
                             [&](std::size_t index) {
-                              const int node_id =
-                                  direct_terminal_node_ids[index];
-                              const game::poker::PokerTreeNode& node =
-                                  tree_.Node(node_id);
-                              const game::poker::IsomorphicMapping& mapping =
-                                  *node_mappings_[static_cast<std::size_t>(
-                                      node_id)];
+                              const TerminalWorkItem& item =
+                                  fold_terminal_items_[index];
                               terminal_cfv_calculator_.CalculateInto(
-                                  *node.node_state, player, mapping,
-                                  storage_.ReachBlock(node_id, 1 - player),
-                                  storage_.NumHands(node_id),
-                                  storage_.CfvBlock(node_id, player));
+                                  *item.node_state, player, *item.mapping,
+                                  storage_.ReachBlock(item.node_id, 1 - player),
+                                  storage_.CfvBlock(item.node_id, player));
                             });
 
-  struct RunoutBatch {
-    const std::vector<int>* node_ids = nullptr;
-    std::size_t offset = 0;
-    std::size_t size = 0;
-  };
-  std::vector<RunoutBatch> runout_batches;
-  for (const auto& entry : runout_node_ids_by_key) {
-    for (std::size_t offset = 0; offset < entry.second.size();
-         offset += kTerminalCfvBatchSize) {
-      runout_batches.push_back(RunoutBatch{
-          &entry.second,
-          offset,
-          std::min(kTerminalCfvBatchSize, entry.second.size() - offset),
-      });
-    }
-  }
+  thread_pool_->ParallelFor(river_matrix_terminal_batches_.size(),
+                            [&](std::size_t index) {
+                              const TerminalWorkBatch& batch =
+                                  river_matrix_terminal_batches_[index];
+                              const auto items = build_batch_items(batch);
+                              terminal_cfv_calculator_
+                                  .CalculateRiverShowdownBatch(items);
+                            });
 
-  thread_pool_->ParallelFor(runout_batches.size(), [&](std::size_t index) {
-    const RunoutBatch& batch = runout_batches[index];
-    std::vector<game::poker::TerminalCfvCalculator::BatchItem> items;
-    items.reserve(batch.size);
-    for (std::size_t batch_index = 0; batch_index < batch.size;
-         ++batch_index) {
-      const int node_id = (*batch.node_ids)[batch.offset + batch_index];
-      const game::poker::PokerTreeNode& node = tree_.Node(node_id);
-      const game::poker::IsomorphicMapping& mapping =
-          *node_mappings_[static_cast<std::size_t>(node_id)];
-      items.push_back(game::poker::TerminalCfvCalculator::BatchItem{
-          node.node_state.get(),
-          player,
-          &mapping,
-          storage_.ReachBlock(node_id, 1 - player),
-          storage_.NumHands(node_id),
-          storage_.CfvBlock(node_id, player),
-      });
-    }
-    terminal_cfv_calculator_.CalculateRunoutShowdownBatch(items);
-  });
+  thread_pool_->ParallelFor(river_scan_terminal_batches_.size(),
+                            [&](std::size_t index) {
+                              const TerminalWorkBatch& batch =
+                                  river_scan_terminal_batches_[index];
+                              const auto items = build_batch_items(batch);
+                              terminal_cfv_calculator_
+                                  .CalculateRiverShowdownScanBatch(items);
+                            });
+
+  thread_pool_->ParallelFor(runout_terminal_batches_.size(),
+                            [&](std::size_t index) {
+                              const TerminalWorkBatch& batch =
+                                  runout_terminal_batches_[index];
+                              const auto items = build_batch_items(batch);
+                              terminal_cfv_calculator_
+                                  .CalculateRunoutShowdownBatch(items);
+                            });
 }
 
 void PokerCfrSolver::BackwardAndUpdate(int hero_player) {
@@ -962,19 +999,14 @@ void PokerCfrSolver::BackwardPlayerNode(
   float* regret = storage_.RegretBlock(node.node_id);
   float* mutable_strategy = storage_.StrategyBlock(node.node_id);
   const float* actor_node_cfv = storage_.CfvBlock(node.node_id, actor);
-  std::vector<const float*> child_cfvs;
-  child_cfvs.reserve(static_cast<std::size_t>(layout.num_actions));
-  for (int action = 0; action < layout.num_actions; ++action) {
-    child_cfvs.push_back(
-        storage_.CfvBlock(tree_.ChildNodeIdAt(node.node_id, action), actor));
-  }
 
   for (int hand = 0; hand < layout.num_hands; ++hand) {
     float positive_sum = 0.0f;
     for (int action = 0; action < layout.num_actions; ++action) {
       const int index = action * layout.num_hands + hand;
-      regret[index] += child_cfvs[static_cast<std::size_t>(action)][hand] -
-                       actor_node_cfv[hand];
+      const int child_id = tree_.ChildNodeIdAt(node.node_id, action);
+      const float* child_cfv = storage_.CfvBlock(child_id, actor);
+      regret[index] += child_cfv[hand] - actor_node_cfv[hand];
       if (regret[index] > 0.0f) {
         positive_sum += regret[index];
       }

@@ -33,6 +33,14 @@ struct ReachStats {
   std::array<std::array<double, GameBasic::kDeckSize>, GameBasic::kDeckSize>
       by_card_pair{};
 
+  void Reset() {
+    total = 0.0;
+    by_card.fill(0.0);
+    for (auto& row : by_card_pair) {
+      row.fill(0.0);
+    }
+  }
+
   void Add(const RawHandEntry& hand, double reach) {
     total += reach;
     by_card[hand.high_card] += reach;
@@ -46,12 +54,6 @@ struct ReachStats {
            by_card_pair[hand.high_card][hand.low_card];
   }
 };
-
-void ValidatePlayer(int player) {
-  if (player < 0 || player >= GameBasic::kNumPlayers) {
-    throw std::invalid_argument("Terminal CFV player must be 0 or 1");
-  }
-}
 
 std::string MatrixKey(const IsomorphicMapping& mapping) {
   return mapping.RawBoard().ToString() + "#" +
@@ -79,17 +81,17 @@ std::vector<RawHandEntry> BuildRawHandEntries(
   return entries;
 }
 
-ReachStats BuildOpponentReachStats(const std::vector<RawHandEntry>& hands,
-                                   const float* opponent_reach) {
-  ReachStats stats;
+void BuildOpponentReachStatsInto(const std::vector<RawHandEntry>& hands,
+                                 const float* opponent_reach,
+                                 ReachStats* stats) {
+  stats->Reset();
   for (const RawHandEntry& hand : hands) {
     const double iso_reach = opponent_reach[hand.iso_index];
     if (iso_reach == 0.0) {
       continue;
     }
-    stats.Add(hand, iso_reach * hand.iso_normalization);
+    stats->Add(hand, iso_reach * hand.iso_normalization);
   }
-  return stats;
 }
 
 void ComputeValidMassInto(const std::vector<RawHandEntry>& hands,
@@ -154,19 +156,18 @@ std::vector<std::pair<std::size_t, std::size_t>> BuildStrengthGroups(
   return groups;
 }
 
-ReachStats BuildStatsForRange(const std::vector<StrengthItem>& items,
-                              std::size_t begin, std::size_t end,
-                              const float* opponent_reach) {
-  ReachStats stats;
+void BuildStatsForRangeInto(const std::vector<StrengthItem>& items,
+                            std::size_t begin, std::size_t end,
+                            const float* opponent_reach, ReachStats* stats) {
+  stats->Reset();
   for (std::size_t index = begin; index < end; ++index) {
     const RawHandEntry& hand = items[index].hand;
     const double iso_reach = opponent_reach[hand.iso_index];
     if (iso_reach == 0.0) {
       continue;
     }
-    stats.Add(hand, iso_reach * hand.iso_normalization);
+    stats->Add(hand, iso_reach * hand.iso_normalization);
   }
-  return stats;
 }
 
 #if defined(FISHER_USE_OPENBLAS)
@@ -281,19 +282,13 @@ std::vector<float> TerminalCfvCalculator::Calculate(
     const NodeState& node, int player, const IsomorphicMapping& mapping,
     const std::vector<float>& opponent_reach) {
   std::vector<float> cfv(static_cast<std::size_t>(mapping.NumIsoHands()), 0.0f);
-  CalculateInto(node, player, mapping, opponent_reach.data(),
-                static_cast<int>(opponent_reach.size()), cfv.data());
+  CalculateInto(node, player, mapping, opponent_reach.data(), cfv.data());
   return cfv;
 }
 
 void TerminalCfvCalculator::CalculateInto(
     const NodeState& node, int player, const IsomorphicMapping& mapping,
-    const float* opponent_reach, int opponent_reach_size, float* out_cfv) {
-  if (out_cfv == nullptr) {
-    throw std::invalid_argument("Terminal CFV output cannot be null");
-  }
-  ValidateInput(node, player, mapping, opponent_reach, opponent_reach_size);
-
+    const float* opponent_reach, float* out_cfv) {
   if (node.Status() == TerminalStatus::kFoldTerminal) {
     CalculateFold(node, player, mapping, opponent_reach, out_cfv);
     return;
@@ -310,49 +305,25 @@ void TerminalCfvCalculator::CalculateRunoutShowdownBatch(
   if (items.empty()) {
     return;
   }
-  const IsomorphicMapping* mapping = items.front().mapping;
-  if (mapping == nullptr) {
-    throw std::invalid_argument("Terminal CFV batch mapping cannot be null");
-  }
-  const int num_iso_hands = mapping->NumIsoHands();
+  const IsomorphicMapping& mapping = *items.front().mapping;
+  const int num_iso_hands = mapping.NumIsoHands();
   std::vector<const float*> reaches;
   reaches.reserve(items.size());
   for (const BatchItem& item : items) {
-    if (item.node == nullptr) {
-      throw std::invalid_argument("Terminal CFV batch node cannot be null");
-    }
-    if (item.mapping == nullptr) {
-      throw std::invalid_argument("Terminal CFV batch mapping cannot be null");
-    }
-    if (item.out_cfv == nullptr) {
-      throw std::invalid_argument("Terminal CFV batch output cannot be null");
-    }
-    if (item.mapping->RawBoard().ToString() !=
-            mapping->RawBoard().ToString() ||
-        item.mapping->NumIsoHands() != num_iso_hands) {
-      throw std::invalid_argument(
-          "Terminal CFV batch items must share one mapping");
-    }
-    ValidateInput(*item.node, item.player, *item.mapping, item.opponent_reach,
-                  item.opponent_reach_size);
-    if (item.node->Status() != TerminalStatus::kShowdownTerminal ||
-        item.node->Street() == PokerRound::kRiver) {
-      throw std::invalid_argument(
-          "Terminal CFV batch only supports flop/turn showdown nodes");
-    }
     reaches.push_back(item.opponent_reach);
   }
 
-  const RunoutShowdownCache& cache = RunoutCacheFor(*mapping);
-  const TerminalWinProbMatrix& matrix = MatrixFor(*mapping);
+  const RunoutShowdownCache& cache = RunoutCacheFor(mapping);
+  const TerminalWinProbMatrix& matrix = MatrixFor(mapping);
   std::vector<float> delta_mass;
   MultiplyEquityDeltaByReachBatchInto(matrix, reaches, &delta_mass);
 
+  ReachStats opponent_stats;
   std::vector<double> valid_mass;
   for (std::size_t column = 0; column < items.size(); ++column) {
     const BatchItem& item = items[column];
-    const ReachStats opponent_stats =
-        BuildOpponentReachStats(cache.raw_hands->hands, item.opponent_reach);
+    BuildOpponentReachStatsInto(cache.raw_hands->hands, item.opponent_reach,
+                                &opponent_stats);
     ComputeValidMassInto(cache.raw_hands->hands, num_iso_hands,
                          opponent_stats, &valid_mass);
     const PlayerTerminalPayoff& payoff =
@@ -370,31 +341,23 @@ void TerminalCfvCalculator::CalculateRunoutShowdownBatch(
   }
 }
 
-void TerminalCfvCalculator::ValidateInput(
-    const NodeState& node, int player, const IsomorphicMapping& mapping,
-    const float* opponent_reach, int opponent_reach_size) const {
-  if (!node.IsTerminal()) {
-    throw std::invalid_argument("Terminal CFV requires a terminal node");
+void TerminalCfvCalculator::CalculateRiverShowdownBatch(
+    const std::vector<BatchItem>& items) {
+  CalculateRunoutShowdownBatch(items);
+}
+
+void TerminalCfvCalculator::CalculateRiverShowdownScanBatch(
+    const std::vector<BatchItem>& items) {
+  if (items.empty()) {
+    return;
   }
-  ValidatePlayer(player);
-  if (node.Board().ToString() != mapping.RawBoard().ToString()) {
-    throw std::invalid_argument(
-        "Terminal CFV mapping board must match node board");
-  }
-  if (opponent_reach == nullptr) {
-    throw std::invalid_argument("Terminal CFV opponent reach cannot be null");
-  }
-  if (opponent_reach_size != mapping.NumIsoHands()) {
-    throw std::invalid_argument("Terminal CFV opponent reach size mismatch");
-  }
-  for (int index = 0; index < opponent_reach_size; ++index) {
-    if (opponent_reach[index] < 0.0f) {
-      throw std::invalid_argument("Terminal CFV reach cannot be negative");
-    }
-  }
-  if (node.Status() == TerminalStatus::kShowdownTerminal &&
-      node.Street() == PokerRound::kPreflop) {
-    throw std::invalid_argument("Terminal CFV only supports postflop nodes");
+  const IsomorphicMapping& mapping = *items.front().mapping;
+  const RiverShowdownCache& cache = RiverCacheFor(mapping);
+  const int num_iso_hands = mapping.NumIsoHands();
+  for (const BatchItem& item : items) {
+    CalculateRiverShowdownWithCache(*item.node, item.player, num_iso_hands,
+                                    cache, item.opponent_reach,
+                                    item.out_cfv);
   }
 }
 
@@ -402,8 +365,8 @@ void TerminalCfvCalculator::CalculateFold(
     const NodeState& node, int player, const IsomorphicMapping& mapping,
     const float* opponent_reach, float* out_cfv) {
   const std::vector<RawHandEntry>& hands = RawHandsFor(mapping).hands;
-  const ReachStats opponent_stats =
-      BuildOpponentReachStats(hands, opponent_reach);
+  ReachStats opponent_stats;
+  BuildOpponentReachStatsInto(hands, opponent_reach, &opponent_stats);
   thread_local std::vector<double> valid_mass;
   ComputeValidMassInto(hands, mapping.NumIsoHands(), opponent_stats,
                        &valid_mass);
@@ -422,19 +385,28 @@ void TerminalCfvCalculator::CalculateRiverShowdown(
     const NodeState& node, int player, const IsomorphicMapping& mapping,
     const float* opponent_reach, float* out_cfv) {
   const RiverShowdownCache& cache = RiverCacheFor(mapping);
-  const ReachStats total_stats =
-      BuildOpponentReachStats(cache.raw_hands->hands, opponent_reach);
+  CalculateRiverShowdownWithCache(node, player, mapping.NumIsoHands(), cache,
+                                  opponent_reach, out_cfv);
+}
+
+void TerminalCfvCalculator::CalculateRiverShowdownWithCache(
+    const NodeState& node, int player, int num_iso_hands,
+    const RiverShowdownCache& cache, const float* opponent_reach,
+    float* out_cfv) {
+  ReachStats total_stats;
+  BuildOpponentReachStatsInto(cache.raw_hands->hands, opponent_reach,
+                              &total_stats);
 
   const PlayerTerminalPayoff& payoff = node.GetTerminalPayoff().players[player];
-  std::fill(out_cfv, out_cfv + mapping.NumIsoHands(), 0.0f);
+  std::fill(out_cfv, out_cfv + num_iso_hands, 0.0f);
   ReachStats weaker_stats;
+  ReachStats tie_stats;
 
   for (const auto& group : cache.strength_groups) {
     const std::size_t group_begin = group.first;
     const std::size_t group_end = group.second;
-    const ReachStats tie_stats =
-        BuildStatsForRange(cache.sorted_items, group_begin, group_end,
-                           opponent_reach);
+    BuildStatsForRangeInto(cache.sorted_items, group_begin, group_end,
+                           opponent_reach, &tie_stats);
     for (std::size_t index = group_begin; index < group_end; ++index) {
       const RawHandEntry& hand = cache.sorted_items[index].hand;
       const double valid_mass = total_stats.Excluding(hand);
@@ -462,8 +434,9 @@ void TerminalCfvCalculator::CalculateRunoutShowdown(
     const NodeState& node, int player, const IsomorphicMapping& mapping,
     const float* opponent_reach, float* out_cfv) {
   const RunoutShowdownCache& cache = RunoutCacheFor(mapping);
-  const ReachStats opponent_stats =
-      BuildOpponentReachStats(cache.raw_hands->hands, opponent_reach);
+  ReachStats opponent_stats;
+  BuildOpponentReachStatsInto(cache.raw_hands->hands, opponent_reach,
+                              &opponent_stats);
   thread_local std::vector<double> valid_mass;
   ComputeValidMassInto(cache.raw_hands->hands, mapping.NumIsoHands(),
                        opponent_stats, &valid_mass);
