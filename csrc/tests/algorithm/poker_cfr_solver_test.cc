@@ -276,11 +276,13 @@ int main() {
   ExpectNear(SumAverageForHand(storage, average, check_node_id, 0), 1.0f,
              "average player 1 node strategy should normalize");
 
+  solver.RunIteration();
   bool has_non_zero_regret = false;
   for (float regret : storage.RegretData()) {
     has_non_zero_regret = has_non_zero_regret || std::fabs(regret) > 1e-6f;
   }
-  Expect(has_non_zero_regret, "iteration should update at least one regret");
+  Expect(has_non_zero_regret,
+         "second iteration should store at least one non-zero regret");
 
   ExpectInvalidArgument(
       [&] {
@@ -343,6 +345,46 @@ int main() {
   }
 
   {
+    auto hero_pass_setup =
+        MakeSetup(PokerCards("AsKdQh2c3d"), 10.0f, {10.0f, 10.0f},
+                  {0.0f, 0.0f}, {0.0f, 0.0f}, /*current_player=*/0,
+                  /*last_aggressor=*/0, /*raise_count=*/0);
+    PokerCfrSolver hero_pass_solver{PokerCfrSolver::Args(
+        hero_pass_setup, /*num_threads=*/1, /*max_iterations=*/500,
+        /*exploitability_check_interval=*/50, /*target_exploitability=*/-1.0f,
+        /*use_dcfr=*/false)};
+    hero_pass_solver.RunHeroPass(0);
+
+    bool updated_player0_node = false;
+    const auto& hero_pass_tree = hero_pass_solver.Tree();
+    const auto& hero_pass_storage = hero_pass_solver.Storage();
+    for (const auto& node : hero_pass_tree.Nodes()) {
+      if (node.node_state->IsTerminal() ||
+          node.node_state->ActorPlayer() ==
+              fisher::game::poker::NodeState::kChancePlayer) {
+        continue;
+      }
+      const fisher::algorithm::NodeCfrLayout& layout =
+          hero_pass_storage.Layout(node.node_id);
+      const float* regrets = hero_pass_storage.RegretBlock(node.node_id);
+      bool has_node_regret = false;
+      for (int index = 0; index < layout.num_actions * layout.num_hands;
+           ++index) {
+        has_node_regret =
+            has_node_regret || std::fabs(regrets[index]) > 1e-6f;
+      }
+      if (node.node_state->ActorPlayer() == 0) {
+        updated_player0_node = updated_player0_node || has_node_regret;
+      } else {
+        Expect(!has_node_regret,
+               "hero 0 pass should not update player 1 regrets");
+      }
+    }
+    Expect(updated_player0_node,
+           "hero 0 pass should update at least one player 0 node regret");
+  }
+
+  {
     auto vanilla_setup =
         MakeSetup(PokerCards("AsKdQh2c3d"), 10.0f, {10.0f, 10.0f},
                   {0.0f, 0.0f}, {0.0f, 0.0f}, /*current_player=*/0,
@@ -376,14 +418,14 @@ int main() {
         continue;
       }
       compared_non_zero_regret = true;
-      ExpectNear(dcfr_regret[index], vanilla_regret[index] * 0.5f,
-                 "first DCFR pass should discount regret by 0.5");
+      ExpectNear(dcfr_regret[index], 0.0f,
+                 "first DCFR pass should use t=0 and clear stored regret");
     }
     Expect(compared_non_zero_regret,
            "DCFR regression should compare at least one non-zero regret");
     ExpectVectorNear(dcfr_solver.Storage().StrategyData(),
                      vanilla_solver.Storage().StrategyData(),
-                     "first DCFR pass should preserve regret-matching ratios");
+                     "first DCFR pass should use undiscounted regret matching");
   }
 
   {

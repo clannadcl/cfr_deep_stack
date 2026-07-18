@@ -403,6 +403,59 @@ void PrintHeroProfile(int iteration, int player,
             << " backward_ms=" << profile.backward_update_ms << '\n';
 }
 
+struct ProfileAccumulator {
+  int passes = 0;
+  double initialize_root_reach_ms = 0.0;
+  double forward_reach_ms = 0.0;
+  double terminal_cfv_ms = 0.0;
+  double backward_update_ms = 0.0;
+  double total_ms = 0.0;
+
+  void Add(const fisher::algorithm::PokerCfrSolver::HeroPassProfile& profile) {
+    ++passes;
+    initialize_root_reach_ms += profile.initialize_root_reach_ms;
+    forward_reach_ms += profile.forward_reach_ms;
+    terminal_cfv_ms += profile.terminal_cfv_ms;
+    backward_update_ms += profile.backward_update_ms;
+    total_ms += profile.total_ms;
+  }
+
+  void Reset() {
+    passes = 0;
+    initialize_root_reach_ms = 0.0;
+    forward_reach_ms = 0.0;
+    terminal_cfv_ms = 0.0;
+    backward_update_ms = 0.0;
+    total_ms = 0.0;
+  }
+};
+
+void PrintProfileWindow(const std::string& prefix, int iteration_begin,
+                        int iteration_end, int player,
+                        const ProfileAccumulator& profile) {
+  if (profile.passes == 0) {
+    return;
+  }
+  const double passes = static_cast<double>(profile.passes);
+  std::cout << prefix
+            << " iteration_begin=" << iteration_begin
+            << " iteration_end=" << iteration_end
+            << " player=" << player
+            << " passes=" << profile.passes
+            << " total_ms=" << profile.total_ms
+            << " total_avg_ms=" << profile.total_ms / passes
+            << " init_reach_ms=" << profile.initialize_root_reach_ms
+            << " init_reach_avg_ms="
+            << profile.initialize_root_reach_ms / passes
+            << " forward_ms=" << profile.forward_reach_ms
+            << " forward_avg_ms=" << profile.forward_reach_ms / passes
+            << " terminal_cfv_ms=" << profile.terminal_cfv_ms
+            << " terminal_cfv_avg_ms=" << profile.terminal_cfv_ms / passes
+            << " backward_ms=" << profile.backward_update_ms
+            << " backward_avg_ms=" << profile.backward_update_ms / passes
+            << '\n';
+}
+
 }  // namespace
 
 int main() {
@@ -567,12 +620,23 @@ int main() {
 
   int reached_iteration = -1;
   float last_exploitability = 0.0f;
+  int river_profile_window_begin = 1;
+  std::array<ProfileAccumulator, 2> river_profile_windows;
   const auto river_solve_begin = std::chrono::steady_clock::now();
   for (int iteration = 1; iteration <= 500; ++iteration) {
-    river_solver.RunIteration();
+    river_profile_windows[0].Add(river_solver.RunHeroPassProfiled(0));
+    river_profile_windows[1].Add(river_solver.RunHeroPassProfiled(1));
     if (iteration % 50 != 0) {
       continue;
     }
+    PrintProfileWindow("river_profile_window", river_profile_window_begin,
+                       iteration, 0, river_profile_windows[0]);
+    PrintProfileWindow("river_profile_window", river_profile_window_begin,
+                       iteration, 1, river_profile_windows[1]);
+    river_profile_window_begin = iteration + 1;
+    river_profile_windows[0].Reset();
+    river_profile_windows[1].Reset();
+
     const auto check_begin = std::chrono::steady_clock::now();
     const fisher::algorithm::ExploitabilityResult result =
         fisher::algorithm::BestResponseCalculator(&river_solver).Compute();

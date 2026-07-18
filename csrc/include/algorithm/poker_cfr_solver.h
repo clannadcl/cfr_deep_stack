@@ -83,6 +83,7 @@ class PokerCfrSolver {
   };
 
   explicit PokerCfrSolver(const Args& args);
+  ~PokerCfrSolver();
 
   void RunIteration();
   void RunHeroPass(int hero_player);
@@ -105,6 +106,8 @@ class PokerCfrSolver {
   const IsoTransition& ChanceTransition(int child_node_id) const;
 
  private:
+  class ThreadPool;
+
   void BuildNodeCaches();
   IsoTransition BuildChanceTransition(int parent_node_id,
                                       int child_node_id) const;
@@ -116,9 +119,9 @@ class PokerCfrSolver {
   void PropagateAveragePlayerReach(const game::poker::PokerTreeNode& node,
                                    float average_epsilon);
   void PropagateChanceReach(const game::poker::PokerTreeNode& node);
-  void ComputeTerminalCfvs();
+  void ComputeTerminalCfvs(int player);
   void BackwardAndUpdate(int hero_player);
-  void BackwardChanceNode(const game::poker::PokerTreeNode& node);
+  void BackwardChanceNode(const game::poker::PokerTreeNode& node, int player);
   void BackwardPlayerNode(const game::poker::PokerTreeNode& node,
                           int hero_player);
   void ApplyRegretDiscount(int node_id);
@@ -142,6 +145,7 @@ class PokerCfrSolver {
   std::vector<int> reverse_node_ids_;
   std::unordered_map<int, IsoTransition> chance_transitions_by_child_;
   int num_threads_ = 1;
+  std::unique_ptr<ThreadPool> thread_pool_;
   int max_iterations_ = 500;
   int exploitability_check_interval_ = 50;
   float target_exploitability_ = 0.0f;

@@ -121,16 +121,37 @@ int main() {
   storage.SumStrategyAt(0, 1, 2) = 2.25f;
   storage.CfvAt(0, 0, num_hands - 1) = 3.5f;
   storage.CfvAt(0, 1, num_hands - 1) = -3.5f;
+  storage.StrategyBlock(0)[num_hands] = 0.625f;
+  storage.RegretBlock(0)[1] = -2.5f;
+  storage.SumStrategyBlock(0)[num_hands + 2] = 4.5f;
+  storage.CfvBlock(0, 0)[num_hands - 1] = 7.0f;
+  storage.CfvBlock(0, 1)[num_hands - 1] = -7.0f;
+  storage.ReachBlock(0, 0)[0] = 0.125f;
+  storage.ReachBlock(0, 1)[num_hands - 1] = 0.375f;
   const CfrStorage& const_storage = storage;
-  Expect(const_storage.StrategyAt(0, 1, num_hands - 1) == 0.75f,
+  Expect(const_storage.StrategyAt(0, 1, 0) == 0.625f,
+         "strategy block mismatch");
+  Expect(const_storage.RegretAt(0, 0, 1) == -2.5f,
+         "regret block mismatch");
+  Expect(const_storage.SumStrategyAt(0, 1, 2) == 4.5f,
+         "sum strategy block mismatch");
+  Expect(const_storage.CfvAt(0, 0, num_hands - 1) == 7.0f,
+         "player 0 cfv block mismatch");
+  Expect(const_storage.CfvAt(0, 1, num_hands - 1) == -7.0f,
+         "player 1 cfv block mismatch");
+  Expect(const_storage.ReachAt(0, 0, 0) == 0.125f,
+         "player 0 reach block mismatch");
+  Expect(const_storage.ReachAt(0, 1, num_hands - 1) == 0.375f,
+         "player 1 reach block mismatch");
+  Expect(const_storage.StrategyBlock(0)[num_hands] == 0.625f,
          "strategy at mismatch");
-  Expect(const_storage.RegretAt(0, 0, 1) == -1.25f,
+  Expect(const_storage.RegretBlock(0)[1] == -2.5f,
          "regret at mismatch");
-  Expect(const_storage.SumStrategyAt(0, 1, 2) == 2.25f,
+  Expect(const_storage.SumStrategyBlock(0)[num_hands + 2] == 4.5f,
          "sum strategy at mismatch");
-  Expect(const_storage.CfvAt(0, 0, num_hands - 1) == 3.5f,
+  Expect(const_storage.CfvBlock(0, 0)[num_hands - 1] == 7.0f,
          "player 0 cfv at mismatch");
-  Expect(const_storage.CfvAt(0, 1, num_hands - 1) == -3.5f,
+  Expect(const_storage.CfvBlock(0, 1)[num_hands - 1] == -7.0f,
          "player 1 cfv at mismatch");
   storage.ReachAt(0, 0, 0) = 0.5f;
   storage.ReachAt(0, 1, num_hands - 1) = 0.25f;

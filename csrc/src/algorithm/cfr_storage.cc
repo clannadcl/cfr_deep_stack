@@ -158,6 +158,66 @@ const float& CfrStorage::ReachAt(int node_id, int player,
       PlayerHandIndex(layout, player, hand_index))];
 }
 
+float* CfrStorage::StrategyBlock(int node_id) {
+  const NodeCfrLayout& layout = Layout(node_id);
+  return strategy_.data() +
+         ActionBlockOffset(layout, layout.strategy_offset, "strategy");
+}
+
+const float* CfrStorage::StrategyBlock(int node_id) const {
+  const NodeCfrLayout& layout = Layout(node_id);
+  return strategy_.data() +
+         ActionBlockOffset(layout, layout.strategy_offset, "strategy");
+}
+
+float* CfrStorage::RegretBlock(int node_id) {
+  const NodeCfrLayout& layout = Layout(node_id);
+  return regret_.data() +
+         ActionBlockOffset(layout, layout.regret_offset, "regret");
+}
+
+const float* CfrStorage::RegretBlock(int node_id) const {
+  const NodeCfrLayout& layout = Layout(node_id);
+  return regret_.data() +
+         ActionBlockOffset(layout, layout.regret_offset, "regret");
+}
+
+float* CfrStorage::SumStrategyBlock(int node_id) {
+  const NodeCfrLayout& layout = Layout(node_id);
+  return sum_strategy_.data() +
+         ActionBlockOffset(layout, layout.sum_strategy_offset,
+                           "sum_strategy");
+}
+
+const float* CfrStorage::SumStrategyBlock(int node_id) const {
+  const NodeCfrLayout& layout = Layout(node_id);
+  return sum_strategy_.data() +
+         ActionBlockOffset(layout, layout.sum_strategy_offset,
+                           "sum_strategy");
+}
+
+float* CfrStorage::CfvBlock(int node_id, int player) {
+  const NodeCfrLayout& layout = Layout(node_id);
+  return cfv_.data() +
+         PlayerBlockOffset(layout, player, layout.cfv_offset, "cfv");
+}
+
+const float* CfrStorage::CfvBlock(int node_id, int player) const {
+  const NodeCfrLayout& layout = Layout(node_id);
+  return cfv_.data() +
+         PlayerBlockOffset(layout, player, layout.cfv_offset, "cfv");
+}
+
+float* CfrStorage::ReachBlock(int node_id, int player) {
+  const NodeCfrLayout& layout = Layout(node_id);
+  return reach_.data() + ReachBlockOffset(layout, player);
+}
+
+const float* CfrStorage::ReachBlock(int node_id, int player) const {
+  const NodeCfrLayout& layout = Layout(node_id);
+  return reach_.data() + ReachBlockOffset(layout, player);
+}
+
 std::vector<float>& CfrStorage::StrategyData() { return strategy_; }
 
 const std::vector<float>& CfrStorage::StrategyData() const {
@@ -237,31 +297,58 @@ void CfrStorage::ValidatePlayer(int player) const {
   }
 }
 
-int CfrStorage::ActionHandIndex(const NodeCfrLayout& layout, int action_index,
-                                int hand_index,
-                                const char* storage_name) const {
+int CfrStorage::ActionBlockOffset(const NodeCfrLayout& layout, int offset,
+                                  const char* storage_name) const {
   if (layout.num_actions <= 0) {
     throw std::invalid_argument(
         std::string("CFR ") + storage_name +
         " storage is only available for player nodes");
   }
-  if (action_index < 0 || action_index >= layout.num_actions) {
+  if (offset < 0) {
     throw std::invalid_argument(
-        std::string("CFR ") + storage_name + " action index is out of range");
+        std::string("CFR ") + storage_name + " storage offset is invalid");
   }
-  if (hand_index < 0 || hand_index >= layout.num_hands) {
-    throw std::invalid_argument(
-        std::string("CFR ") + storage_name + " hand index is out of range");
-  }
+  return offset;
+}
 
+int CfrStorage::PlayerBlockOffset(const NodeCfrLayout& layout, int player,
+                                  int offset,
+                                  const char* storage_name) const {
+  ValidatePlayer(player);
+  if (offset < 0) {
+    throw std::invalid_argument(std::string("CFR ") + storage_name +
+                                " storage offset is invalid");
+  }
+  return offset + player * layout.num_hands;
+}
+
+int CfrStorage::ReachBlockOffset(const NodeCfrLayout& layout,
+                                 int player) const {
+  ValidatePlayer(player);
+  const int offset =
+      layout.reach_offset[static_cast<std::size_t>(player)];
+  if (offset < 0) {
+    throw std::invalid_argument("CFR reach storage offset is invalid");
+  }
+  return offset;
+}
+
+int CfrStorage::ActionHandIndex(const NodeCfrLayout& layout, int action_index,
+                                int hand_index,
+                                const char* storage_name) const {
   const int offset =
       storage_name == std::string("strategy")
           ? layout.strategy_offset
           : (storage_name == std::string("regret") ? layout.regret_offset
                                                    : layout.sum_strategy_offset);
-  if (offset < 0) {
+  ActionBlockOffset(layout, offset, storage_name);
+  if (action_index < 0 || action_index >= layout.num_actions) {
     throw std::invalid_argument(
-        std::string("CFR ") + storage_name + " storage offset is invalid");
+        std::string("CFR ") + storage_name + " action index is out of range");
+  }
+  if (hand_index < 0 || hand_index >= layout.num_hands) {
+      throw std::invalid_argument(
+          std::string("CFR ") + storage_name + " hand index is out of range");
   }
   return offset + action_index * layout.num_hands + hand_index;
 }
@@ -279,28 +366,19 @@ int CfrStorage::HandIndex(const NodeCfrLayout& layout, int hand_index) const {
 int CfrStorage::PlayerHandIndex(const NodeCfrLayout& layout, int player,
                                 int hand_index, int offset,
                                 const char* storage_name) const {
-  ValidatePlayer(player);
+  PlayerBlockOffset(layout, player, offset, storage_name);
   if (hand_index < 0 || hand_index >= layout.num_hands) {
     throw std::invalid_argument(std::string("CFR ") + storage_name +
                                 " hand index is out of range");
-  }
-  if (offset < 0) {
-    throw std::invalid_argument(std::string("CFR ") + storage_name +
-                                " storage offset is invalid");
   }
   return offset + player * layout.num_hands + hand_index;
 }
 
 int CfrStorage::PlayerHandIndex(const NodeCfrLayout& layout, int player,
                                 int hand_index) const {
-  ValidatePlayer(player);
+  const int offset = ReachBlockOffset(layout, player);
   if (hand_index < 0 || hand_index >= layout.num_hands) {
     throw std::invalid_argument("CFR reach hand index is out of range");
-  }
-  const int offset =
-      layout.reach_offset[static_cast<std::size_t>(player)];
-  if (offset < 0) {
-    throw std::invalid_argument("CFR reach storage offset is invalid");
   }
   return offset + hand_index;
 }

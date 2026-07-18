@@ -2,11 +2,12 @@
 
 #include <algorithm>
 #include <array>
-#include <atomic>
 #include <chrono>
 #include <cmath>
+#include <condition_variable>
 #include <cstddef>
 #include <exception>
+#include <functional>
 #include <mutex>
 #include <stdexcept>
 #include <thread>
@@ -22,6 +23,7 @@ namespace fisher::algorithm {
 namespace {
 
 constexpr float kEvMassEpsilon = 1e-10f;
+constexpr std::size_t kTerminalCfvBatchSize = 64;
 
 struct EvRawHandEntry {
   int iso_index = -1;
@@ -118,8 +120,8 @@ float ValidateNonNegativeFloat(float value, const char* name) {
 }
 
 float DcfrDiscount(int iteration, float exponent) {
-  if (iteration <= 0) {
-    throw std::invalid_argument("DCFR iteration must be positive");
+  if (iteration < 0) {
+    throw std::invalid_argument("DCFR iteration cannot be negative");
   }
   const double powered =
       std::pow(static_cast<double>(iteration), static_cast<double>(exponent));
@@ -127,8 +129,8 @@ float DcfrDiscount(int iteration, float exponent) {
 }
 
 float DcfrAverageStrategyDiscount(int iteration, float exponent) {
-  if (iteration <= 0) {
-    throw std::invalid_argument("DCFR iteration must be positive");
+  if (iteration < 0) {
+    throw std::invalid_argument("DCFR iteration cannot be negative");
   }
   const double ratio = static_cast<double>(iteration) /
                        static_cast<double>(iteration + 1);
@@ -179,54 +181,6 @@ std::vector<float> ComputeEvValidMass(
                            hand.iso_normalization);
   }
   return valid_mass;
-}
-
-template <typename Fn>
-void ParallelFor(std::size_t count, int num_threads, Fn fn) {
-  if (count == 0) {
-    return;
-  }
-  if (num_threads <= 1 || count == 1) {
-    for (std::size_t index = 0; index < count; ++index) {
-      fn(index);
-    }
-    return;
-  }
-
-  const int worker_count =
-      std::min(num_threads, static_cast<int>(count));
-  std::atomic<std::size_t> next_index{0};
-  std::mutex exception_mutex;
-  std::exception_ptr first_exception = nullptr;
-  std::vector<std::thread> workers;
-  workers.reserve(static_cast<std::size_t>(worker_count));
-
-  for (int worker = 0; worker < worker_count; ++worker) {
-    workers.emplace_back([&] {
-      while (true) {
-        const std::size_t index = next_index.fetch_add(1);
-        if (index >= count) {
-          return;
-        }
-        try {
-          fn(index);
-        } catch (...) {
-          std::lock_guard<std::mutex> lock(exception_mutex);
-          if (first_exception == nullptr) {
-            first_exception = std::current_exception();
-          }
-          return;
-        }
-      }
-    });
-  }
-
-  for (std::thread& worker : workers) {
-    worker.join();
-  }
-  if (first_exception != nullptr) {
-    std::rethrow_exception(first_exception);
-  }
 }
 
 int TransitionKey(int parent_iso, int child_iso, int child_num_hands) {
@@ -310,6 +264,116 @@ IsoTransition BuildIsoTransition(
   return transition;
 }
 
+class PokerCfrSolver::ThreadPool {
+ public:
+  explicit ThreadPool(int num_threads) {
+    if (num_threads <= 1) {
+      return;
+    }
+    workers_.reserve(static_cast<std::size_t>(num_threads));
+    for (int worker = 0; worker < num_threads; ++worker) {
+      workers_.emplace_back([this] { WorkerLoop(); });
+    }
+  }
+
+  ~ThreadPool() {
+    {
+      std::lock_guard<std::mutex> lock(mutex_);
+      stop_ = true;
+      job_available_.notify_all();
+    }
+    for (std::thread& worker : workers_) {
+      if (worker.joinable()) {
+        worker.join();
+      }
+    }
+  }
+
+  template <typename Fn>
+  void ParallelFor(std::size_t count, Fn fn) {
+    if (count == 0) {
+      return;
+    }
+    if (workers_.empty() || count == 1) {
+      for (std::size_t index = 0; index < count; ++index) {
+        fn(index);
+      }
+      return;
+    }
+
+    {
+      std::lock_guard<std::mutex> lock(mutex_);
+      if (has_job_) {
+        throw std::runtime_error("ThreadPool does not support nested jobs");
+      }
+      task_ = std::move(fn);
+      count_ = count;
+      next_index_ = 0;
+      remaining_ = count;
+      first_exception_ = nullptr;
+      has_job_ = true;
+    }
+    job_available_.notify_all();
+
+    std::unique_lock<std::mutex> lock(mutex_);
+    job_done_.wait(lock, [this] { return !has_job_; });
+    if (first_exception_ != nullptr) {
+      std::rethrow_exception(first_exception_);
+    }
+  }
+
+ private:
+  void WorkerLoop() {
+    while (true) {
+      std::size_t index = 0;
+      {
+        std::unique_lock<std::mutex> lock(mutex_);
+        job_available_.wait(lock, [this] {
+          return stop_ || (has_job_ && next_index_ < count_);
+        });
+        if (stop_) {
+          return;
+        }
+        index = next_index_;
+        ++next_index_;
+      }
+
+      try {
+        task_(index);
+      } catch (...) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (first_exception_ == nullptr) {
+          first_exception_ = std::current_exception();
+        }
+      }
+
+      {
+        std::lock_guard<std::mutex> lock(mutex_);
+        --remaining_;
+        if (remaining_ == 0) {
+          has_job_ = false;
+          task_ = nullptr;
+          job_done_.notify_one();
+        } else if (next_index_ < count_) {
+          job_available_.notify_one();
+        }
+      }
+    }
+  }
+
+  std::vector<std::thread> workers_;
+  std::mutex mutex_;
+  std::condition_variable job_available_;
+  std::condition_variable job_done_;
+  std::function<void(std::size_t)> task_;
+  std::exception_ptr first_exception_ = nullptr;
+  std::size_t count_ = 0;
+  std::size_t next_index_ = 0;
+  std::size_t remaining_ = 0;
+  bool has_job_ = false;
+  bool stop_ = false;
+};
+
 PokerCfrSolver::PokerCfrSolver(const Args& args)
     : setup_(ValidateSetup(args.setup)),
       tree_(setup_),
@@ -334,8 +398,11 @@ PokerCfrSolver::PokerCfrSolver(const Args& args)
       average_strategy_discount_exponent_(ValidateNonNegativeFloat(
           args.average_strategy_discount_exponent,
           "DCFR average strategy discount exponent must be non-negative")) {
+  thread_pool_ = std::make_unique<ThreadPool>(num_threads_);
   BuildNodeCaches();
 }
+
+PokerCfrSolver::~PokerCfrSolver() = default;
 
 void PokerCfrSolver::RunIteration() {
   average_finalized_ = false;
@@ -368,7 +435,7 @@ PokerCfrSolver::HeroPassProfile PokerCfrSolver::RunHeroPassProfiled(
   const auto forward_end = Clock::now();
 
   const auto terminal_begin = Clock::now();
-  ComputeTerminalCfvs();
+  ComputeTerminalCfvs(hero_player);
   const auto terminal_end = Clock::now();
 
   const auto backward_begin = Clock::now();
@@ -426,7 +493,7 @@ void PokerCfrSolver::FinalizeAverageStrategy(float average_epsilon) {
 
   InitializeRootReach();
   for (const std::vector<int>& level : node_ids_by_depth_) {
-    ParallelFor(level.size(), num_threads_, [&](std::size_t index) {
+    thread_pool_->ParallelFor(level.size(), [&](std::size_t index) {
       const game::poker::PokerTreeNode& node = tree_.Node(level[index]);
       if (node.node_state->IsTerminal()) {
         return;
@@ -440,19 +507,21 @@ void PokerCfrSolver::FinalizeAverageStrategy(float average_epsilon) {
     });
   }
 
-  ComputeTerminalCfvs();
+  ComputeTerminalCfvs(0);
+  ComputeTerminalCfvs(1);
 
   for (auto level_it = node_ids_by_depth_.rbegin();
        level_it != node_ids_by_depth_.rend(); ++level_it) {
     const std::vector<int>& level = *level_it;
-    ParallelFor(level.size(), num_threads_, [&](std::size_t index) {
+    thread_pool_->ParallelFor(level.size(), [&](std::size_t index) {
       const game::poker::PokerTreeNode& node = tree_.Node(level[index]);
       if (node.node_state->IsTerminal()) {
         return;
       }
       if (node.node_state->ActorPlayer() ==
           game::poker::NodeState::kChancePlayer) {
-        BackwardChanceNode(node);
+        BackwardChanceNode(node, /*player=*/0);
+        BackwardChanceNode(node, /*player=*/1);
       } else {
         BackwardAveragePlayerNode(node, average_epsilon);
       }
@@ -636,8 +705,8 @@ void PokerCfrSolver::RefreshDcfrDiscounts() {
     return;
   }
 
-  const int iteration = hero_pass_count_ / game::poker::GameBasic::kNumPlayers +
-                        1;
+  const int iteration =
+      hero_pass_count_ / game::poker::GameBasic::kNumPlayers;
   current_positive_regret_discount_ =
       DcfrDiscount(iteration, positive_regret_discount_exponent_);
   current_negative_regret_discount_ =
@@ -672,7 +741,7 @@ void PokerCfrSolver::InitializeRootReach() {
 
 void PokerCfrSolver::ForwardReachAndAccumulateAverage(int hero_player) {
   for (const std::vector<int>& level : node_ids_by_depth_) {
-    ParallelFor(level.size(), num_threads_, [&](std::size_t index) {
+    thread_pool_->ParallelFor(level.size(), [&](std::size_t index) {
       const game::poker::PokerTreeNode& node =
           tree_.Node(level[index]);
       if (node.node_state->IsTerminal()) {
@@ -692,22 +761,27 @@ void PokerCfrSolver::PropagatePlayerReach(
     const game::poker::PokerTreeNode& node, int hero_player) {
   const int actor = node.node_state->ActorPlayer();
   const NodeCfrLayout& layout = storage_.Layout(node.node_id);
+  const float* parent_reach = storage_.ReachBlock(node.node_id, actor);
+  const float* strategy = storage_.StrategyBlock(node.node_id);
   for (int action = 0; action < layout.num_actions; ++action) {
     const int child_id = tree_.ChildNodeIdAt(node.node_id, action);
+    float* child_reach = storage_.ReachBlock(child_id, actor);
+    const float* action_strategy =
+        strategy + static_cast<std::size_t>(action * layout.num_hands);
     for (int hand = 0; hand < layout.num_hands; ++hand) {
-      storage_.ReachAt(child_id, actor, hand) =
-          storage_.ReachAt(node.node_id, actor, hand) *
-          storage_.StrategyAt(node.node_id, action, hand);
+      child_reach[hand] = parent_reach[hand] * action_strategy[hand];
     }
   }
 
   if (actor == hero_player) {
-    ApplyAverageStrategyDiscount(node.node_id);
+    float* sum_strategy = storage_.SumStrategyBlock(node.node_id);
     for (int action = 0; action < layout.num_actions; ++action) {
+      const int action_offset = action * layout.num_hands;
       for (int hand = 0; hand < layout.num_hands; ++hand) {
-        storage_.SumStrategyAt(node.node_id, action, hand) +=
-            storage_.ReachAt(node.node_id, actor, hand) *
-            storage_.StrategyAt(node.node_id, action, hand);
+        const int index = action_offset + hand;
+        sum_strategy[index] =
+            sum_strategy[index] * current_average_strategy_discount_ +
+            parent_reach[hand] * strategy[index];
       }
     }
   }
@@ -746,20 +820,79 @@ void PokerCfrSolver::PropagateChanceReach(
   }
 }
 
-void PokerCfrSolver::ComputeTerminalCfvs() {
-  ParallelFor(terminal_node_ids_.size(), num_threads_, [&](std::size_t index) {
-    const int node_id = terminal_node_ids_[index];
+void PokerCfrSolver::ComputeTerminalCfvs(int player) {
+  ValidatePlayer(player);
+  std::vector<int> direct_terminal_node_ids;
+  std::unordered_map<std::string, std::vector<int>> runout_node_ids_by_key;
+  direct_terminal_node_ids.reserve(terminal_node_ids_.size());
+  for (int node_id : terminal_node_ids_) {
     const game::poker::PokerTreeNode& node = tree_.Node(node_id);
-    const game::poker::IsomorphicMapping& mapping =
-        *node_mappings_[static_cast<std::size_t>(node_id)];
-    for (int player = 0; player < game::poker::GameBasic::kNumPlayers;
-         ++player) {
-      const std::vector<float> opponent_reach =
-          ReachVector(node_id, 1 - player);
-      const std::vector<float> cfv = terminal_cfv_calculator_.Calculate(
-          *node.node_state, player, mapping, opponent_reach);
-      WriteCfvVector(node_id, player, cfv);
+    if (node.node_state->Status() ==
+            game::poker::TerminalStatus::kShowdownTerminal &&
+        node.node_state->Street() != game::poker::PokerRound::kRiver) {
+      const game::poker::IsomorphicMapping& mapping =
+          *node_mappings_[static_cast<std::size_t>(node_id)];
+      const std::string key = mapping.RawBoard().ToString() + "#" +
+                              std::to_string(mapping.NumIsoHands());
+      runout_node_ids_by_key[key].push_back(node_id);
+    } else {
+      direct_terminal_node_ids.push_back(node_id);
     }
+  }
+
+  thread_pool_->ParallelFor(direct_terminal_node_ids.size(),
+                            [&](std::size_t index) {
+                              const int node_id =
+                                  direct_terminal_node_ids[index];
+                              const game::poker::PokerTreeNode& node =
+                                  tree_.Node(node_id);
+                              const game::poker::IsomorphicMapping& mapping =
+                                  *node_mappings_[static_cast<std::size_t>(
+                                      node_id)];
+                              terminal_cfv_calculator_.CalculateInto(
+                                  *node.node_state, player, mapping,
+                                  storage_.ReachBlock(node_id, 1 - player),
+                                  storage_.NumHands(node_id),
+                                  storage_.CfvBlock(node_id, player));
+                            });
+
+  struct RunoutBatch {
+    const std::vector<int>* node_ids = nullptr;
+    std::size_t offset = 0;
+    std::size_t size = 0;
+  };
+  std::vector<RunoutBatch> runout_batches;
+  for (const auto& entry : runout_node_ids_by_key) {
+    for (std::size_t offset = 0; offset < entry.second.size();
+         offset += kTerminalCfvBatchSize) {
+      runout_batches.push_back(RunoutBatch{
+          &entry.second,
+          offset,
+          std::min(kTerminalCfvBatchSize, entry.second.size() - offset),
+      });
+    }
+  }
+
+  thread_pool_->ParallelFor(runout_batches.size(), [&](std::size_t index) {
+    const RunoutBatch& batch = runout_batches[index];
+    std::vector<game::poker::TerminalCfvCalculator::BatchItem> items;
+    items.reserve(batch.size);
+    for (std::size_t batch_index = 0; batch_index < batch.size;
+         ++batch_index) {
+      const int node_id = (*batch.node_ids)[batch.offset + batch_index];
+      const game::poker::PokerTreeNode& node = tree_.Node(node_id);
+      const game::poker::IsomorphicMapping& mapping =
+          *node_mappings_[static_cast<std::size_t>(node_id)];
+      items.push_back(game::poker::TerminalCfvCalculator::BatchItem{
+          node.node_state.get(),
+          player,
+          &mapping,
+          storage_.ReachBlock(node_id, 1 - player),
+          storage_.NumHands(node_id),
+          storage_.CfvBlock(node_id, player),
+      });
+    }
+    terminal_cfv_calculator_.CalculateRunoutShowdownBatch(items);
   });
 }
 
@@ -767,7 +900,7 @@ void PokerCfrSolver::BackwardAndUpdate(int hero_player) {
   for (auto level_it = node_ids_by_depth_.rbegin();
        level_it != node_ids_by_depth_.rend(); ++level_it) {
     const std::vector<int>& level = *level_it;
-    ParallelFor(level.size(), num_threads_, [&](std::size_t index) {
+    thread_pool_->ParallelFor(level.size(), [&](std::size_t index) {
       const game::poker::PokerTreeNode& node =
           tree_.Node(level[index]);
       if (node.node_state->IsTerminal()) {
@@ -775,7 +908,7 @@ void PokerCfrSolver::BackwardAndUpdate(int hero_player) {
       }
       if (node.node_state->ActorPlayer() ==
           game::poker::NodeState::kChancePlayer) {
-        BackwardChanceNode(node);
+        BackwardChanceNode(node, hero_player);
       } else {
         BackwardPlayerNode(node, hero_player);
       }
@@ -784,24 +917,18 @@ void PokerCfrSolver::BackwardAndUpdate(int hero_player) {
 }
 
 void PokerCfrSolver::BackwardChanceNode(
-    const game::poker::PokerTreeNode& node) {
-  for (int player = 0; player < game::poker::GameBasic::kNumPlayers;
-       ++player) {
-    for (int hand = 0; hand < storage_.NumHands(node.node_id); ++hand) {
-      storage_.CfvAt(node.node_id, player, hand) = 0.0f;
-    }
+    const game::poker::PokerTreeNode& node, int player) {
+  for (int hand = 0; hand < storage_.NumHands(node.node_id); ++hand) {
+    storage_.CfvAt(node.node_id, player, hand) = 0.0f;
   }
 
   for (int child_index = 0; child_index < node.num_children; ++child_index) {
     const int child_id = tree_.ChildNodeIdAt(node.node_id, child_index);
     const IsoTransition& transition = ChanceTransition(child_id);
-    for (int player = 0; player < game::poker::GameBasic::kNumPlayers;
-         ++player) {
-      for (const IsoTransitionEdge& edge : transition.edges) {
-        storage_.CfvAt(node.node_id, player, edge.parent_iso) +=
-            storage_.CfvAt(child_id, player, edge.child_iso) * edge.weight *
-            transition.chance_prob;
-      }
+    for (const IsoTransitionEdge& edge : transition.edges) {
+      storage_.CfvAt(node.node_id, player, edge.parent_iso) +=
+          storage_.CfvAt(child_id, player, edge.child_iso) * edge.weight *
+          transition.chance_prob;
     }
   }
 }
@@ -810,39 +937,71 @@ void PokerCfrSolver::BackwardPlayerNode(
     const game::poker::PokerTreeNode& node, int hero_player) {
   const int actor = node.node_state->ActorPlayer();
   const NodeCfrLayout& layout = storage_.Layout(node.node_id);
+  const float* strategy = storage_.StrategyBlock(node.node_id);
 
-  for (int player = 0; player < game::poker::GameBasic::kNumPlayers;
-       ++player) {
-    for (int hand = 0; hand < layout.num_hands; ++hand) {
-      double value = 0.0;
-      for (int action = 0; action < layout.num_actions; ++action) {
-        const int child_id = tree_.ChildNodeIdAt(node.node_id, action);
-        const double child_value =
-            storage_.CfvAt(child_id, player, hand);
-        value += player == actor
-                     ? static_cast<double>(
-                           storage_.StrategyAt(node.node_id, action, hand)) *
-                           child_value
-                     : child_value;
-      }
-      storage_.CfvAt(node.node_id, player, hand) = static_cast<float>(value);
+  float* node_cfv = storage_.CfvBlock(node.node_id, hero_player);
+  for (int hand = 0; hand < layout.num_hands; ++hand) {
+    double value = 0.0;
+    for (int action = 0; action < layout.num_actions; ++action) {
+      const int child_id = tree_.ChildNodeIdAt(node.node_id, action);
+      const float* child_cfv = storage_.CfvBlock(child_id, hero_player);
+      const double child_value = child_cfv[hand];
+      value += hero_player == actor
+                   ? static_cast<double>(
+                         strategy[action * layout.num_hands + hand]) *
+                         child_value
+                   : child_value;
     }
+    node_cfv[hand] = static_cast<float>(value);
   }
 
   if (actor != hero_player) {
     return;
   }
 
+  float* regret = storage_.RegretBlock(node.node_id);
+  float* mutable_strategy = storage_.StrategyBlock(node.node_id);
+  const float* actor_node_cfv = storage_.CfvBlock(node.node_id, actor);
+  std::vector<const float*> child_cfvs;
+  child_cfvs.reserve(static_cast<std::size_t>(layout.num_actions));
   for (int action = 0; action < layout.num_actions; ++action) {
-    const int child_id = tree_.ChildNodeIdAt(node.node_id, action);
-    for (int hand = 0; hand < layout.num_hands; ++hand) {
-      storage_.RegretAt(node.node_id, action, hand) +=
-          storage_.CfvAt(child_id, actor, hand) -
-          storage_.CfvAt(node.node_id, actor, hand);
+    child_cfvs.push_back(
+        storage_.CfvBlock(tree_.ChildNodeIdAt(node.node_id, action), actor));
+  }
+
+  for (int hand = 0; hand < layout.num_hands; ++hand) {
+    float positive_sum = 0.0f;
+    for (int action = 0; action < layout.num_actions; ++action) {
+      const int index = action * layout.num_hands + hand;
+      regret[index] += child_cfvs[static_cast<std::size_t>(action)][hand] -
+                       actor_node_cfv[hand];
+      if (regret[index] > 0.0f) {
+        positive_sum += regret[index];
+      }
+    }
+
+    if (positive_sum <= 0.0f) {
+      const float uniform = 1.0f / static_cast<float>(layout.num_actions);
+      for (int action = 0; action < layout.num_actions; ++action) {
+        mutable_strategy[action * layout.num_hands + hand] = uniform;
+      }
+    } else {
+      for (int action = 0; action < layout.num_actions; ++action) {
+        const int index = action * layout.num_hands + hand;
+        mutable_strategy[index] =
+            std::max(0.0f, regret[index]) / positive_sum;
+      }
+    }
+
+    for (int action = 0; action < layout.num_actions; ++action) {
+      const int index = action * layout.num_hands + hand;
+      if (regret[index] > 0.0f) {
+        regret[index] *= current_positive_regret_discount_;
+      } else if (regret[index] < 0.0f) {
+        regret[index] *= current_negative_regret_discount_;
+      }
     }
   }
-  ApplyRegretDiscount(node.node_id);
-  UpdateStrategyFromRegret(node.node_id);
 }
 
 void PokerCfrSolver::ApplyRegretDiscount(int node_id) {

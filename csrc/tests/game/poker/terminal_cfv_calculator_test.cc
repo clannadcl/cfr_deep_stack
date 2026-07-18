@@ -460,6 +460,58 @@ int main() {
   }
 
   {
+    const PokerCards board("2c7dJhQs");
+    auto setup = MakeSetup(board, 20.0f, {0.0f, 0.0f}, {100.0f, 100.0f},
+                           {100.0f, 100.0f});
+    const NodeState node = MakeTerminalNode(
+        setup, TerminalStatus::kShowdownTerminal, {false, false});
+    const std::vector<std::string> hands = {
+        "KdKh", "KsKc", "TdTh", "9c9d", "8s8h", "3c3d"};
+    IsomorphicMapping mapping(game_basic, board,
+                              PossibleHands(game_basic, hands));
+    std::vector<float> reach_a(
+        static_cast<std::size_t>(mapping.NumIsoHands()), 0.0f);
+    std::vector<float> reach_b(
+        static_cast<std::size_t>(mapping.NumIsoHands()), 0.0f);
+    AddReachFor(game_basic, mapping, "KdKh", 0.421f, &reach_a);
+    AddReachFor(game_basic, mapping, "TdTh", 0.163f, &reach_a);
+    AddReachFor(game_basic, mapping, "8s8h", 0.905f, &reach_a);
+    AddReachFor(game_basic, mapping, "KsKc", 0.792f, &reach_b);
+    AddReachFor(game_basic, mapping, "9c9d", 0.534f, &reach_b);
+    AddReachFor(game_basic, mapping, "3c3d", 0.276f, &reach_b);
+
+    std::vector<float> single_a(
+        static_cast<std::size_t>(mapping.NumIsoHands()), 0.0f);
+    std::vector<float> single_b(
+        static_cast<std::size_t>(mapping.NumIsoHands()), 0.0f);
+    std::vector<float> batch_a(
+        static_cast<std::size_t>(mapping.NumIsoHands()), 0.0f);
+    std::vector<float> batch_b(
+        static_cast<std::size_t>(mapping.NumIsoHands()), 0.0f);
+    calculator.CalculateInto(node, /*player=*/0, mapping, reach_a.data(),
+                             static_cast<int>(reach_a.size()),
+                             single_a.data());
+    calculator.CalculateInto(node, /*player=*/0, mapping, reach_b.data(),
+                             static_cast<int>(reach_b.size()),
+                             single_b.data());
+    calculator.CalculateRunoutShowdownBatch(
+        {TerminalCfvCalculator::BatchItem{
+             &node, /*player=*/0, &mapping, reach_a.data(),
+             static_cast<int>(reach_a.size()), batch_a.data()},
+         TerminalCfvCalculator::BatchItem{
+             &node, /*player=*/0, &mapping, reach_b.data(),
+             static_cast<int>(reach_b.size()), batch_b.data()}});
+    for (int hand = 0; hand < mapping.NumIsoHands(); ++hand) {
+      ExpectNear(batch_a[static_cast<std::size_t>(hand)],
+                 single_a[static_cast<std::size_t>(hand)], 1e-5f,
+                 "turn batch CFV should match single calculation");
+      ExpectNear(batch_b[static_cast<std::size_t>(hand)],
+                 single_b[static_cast<std::size_t>(hand)], 1e-5f,
+                 "turn second batch CFV should match single calculation");
+    }
+  }
+
+  {
     const PokerCards board("AcAdAhAs");
     auto setup = MakeSetup(board, 2.0f, {100.0f, 100.0f}, {0.0f, 0.0f},
                            {0.0f, 0.0f});

@@ -4,12 +4,12 @@
   "config": {
     "spot_config": {
       "stacks": [
-        56.25,
-        56.25
+        100.0,
+        100.0
       ],
       "round": "river",
       "board_cards": "Kd8d4d4s4c",
-      "common_pot": 10.0,
+      "common_pot": 1.0,
       "min_bet_increment": 0.1,
       "previous_street_aggressor": 1,
       "current_player": 0,

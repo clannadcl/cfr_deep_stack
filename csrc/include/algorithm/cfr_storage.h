@@ -43,6 +43,17 @@ class CfrStorage {
   const float& SumStrategyAt(int node_id, int action_index,
                              int hand_index) const;
 
+  float* StrategyBlock(int node_id);
+  const float* StrategyBlock(int node_id) const;
+  float* RegretBlock(int node_id);
+  const float* RegretBlock(int node_id) const;
+  float* SumStrategyBlock(int node_id);
+  const float* SumStrategyBlock(int node_id) const;
+  float* CfvBlock(int node_id, int player);
+  const float* CfvBlock(int node_id, int player) const;
+  float* ReachBlock(int node_id, int player);
+  const float* ReachBlock(int node_id, int player) const;
+
   std::vector<float>& StrategyData();
   const std::vector<float>& StrategyData() const;
   std::vector<float>& RegretData();
@@ -60,6 +71,11 @@ class CfrStorage {
                              const game::poker::PokerTreeNode& node);
   void ValidateNodeId(int node_id) const;
   void ValidatePlayer(int player) const;
+  int ActionBlockOffset(const NodeCfrLayout& layout, int offset,
+                        const char* storage_name) const;
+  int PlayerBlockOffset(const NodeCfrLayout& layout, int player, int offset,
+                        const char* storage_name) const;
+  int ReachBlockOffset(const NodeCfrLayout& layout, int player) const;
   int ActionHandIndex(const NodeCfrLayout& layout, int action_index,
                       int hand_index, const char* storage_name) const;
   int HandIndex(const NodeCfrLayout& layout, int hand_index) const;
