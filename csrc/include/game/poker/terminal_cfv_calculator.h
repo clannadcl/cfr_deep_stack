@@ -16,6 +16,27 @@ namespace fisher::game::poker {
 
 class TerminalCfvCalculator {
  public:
+  struct Profile {
+    int64_t fold_calls = 0;
+    int64_t runout_batch_calls = 0;
+    int64_t river_matrix_batch_calls = 0;
+    int64_t river_scan_batch_calls = 0;
+    int64_t river_scan_items = 0;
+    int64_t runout_batch_items = 0;
+
+    double fold_ms = 0.0;
+    double runout_cache_ms = 0.0;
+    double runout_matrix_ms = 0.0;
+    double runout_multiply_ms = 0.0;
+    double runout_valid_mass_ms = 0.0;
+    double runout_combine_ms = 0.0;
+    double river_scan_cache_ms = 0.0;
+    double river_scan_stats_ms = 0.0;
+    double river_scan_group_stats_ms = 0.0;
+    double river_scan_combine_ms = 0.0;
+    double river_scan_accumulate_ms = 0.0;
+  };
+
   TerminalCfvCalculator(const GameBasic& game_basic,
                         const SevenCardLookupTable& evaluator);
   ~TerminalCfvCalculator();
@@ -37,6 +58,10 @@ class TerminalCfvCalculator {
   void CalculateRunoutShowdownBatch(const std::vector<BatchItem>& items);
   void CalculateRiverShowdownBatch(const std::vector<BatchItem>& items);
   void CalculateRiverShowdownScanBatch(const std::vector<BatchItem>& items);
+  void SetProfilingEnabled(bool enabled);
+  bool ProfilingEnabled() const;
+  void ResetProfile();
+  Profile ProfileSnapshot() const;
 
  private:
   struct RawHandsCache;
@@ -63,6 +88,7 @@ class TerminalCfvCalculator {
   const RunoutShowdownCache& RunoutCacheFor(
       const IsomorphicMapping& mapping);
   const RiverShowdownCache& RiverCacheFor(const IsomorphicMapping& mapping);
+  void AddProfile(const Profile& profile);
 
   const GameBasic& game_basic_;
   const SevenCardLookupTable& evaluator_;
@@ -75,6 +101,9 @@ class TerminalCfvCalculator {
   std::unordered_map<std::string, std::unique_ptr<RiverShowdownCache>>
       river_cache_;
   std::mutex cache_mutex_;
+  mutable std::mutex profile_mutex_;
+  Profile profile_;
+  bool profiling_enabled_ = false;
 };
 
 }  // namespace fisher::game::poker

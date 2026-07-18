@@ -24,7 +24,7 @@ namespace {
 
 constexpr float kEvMassEpsilon = 1e-10f;
 constexpr std::size_t kTerminalCfvBatchSize = 64;
-constexpr std::size_t kRiverTerminalCfvBatchSize = 2;
+constexpr std::size_t kRiverTerminalCfvBatchSize = 4;
 
 struct EvRawHandEntry {
   int iso_index = -1;
@@ -644,15 +644,34 @@ const std::vector<int>& PokerCfrSolver::ReverseNodeIds() const {
 
 const IsoTransition& PokerCfrSolver::ChanceTransition(
     int child_node_id) const {
-  const auto iterator = chance_transitions_by_child_.find(child_node_id);
-  if (iterator == chance_transitions_by_child_.end()) {
+  if (child_node_id < 0 ||
+      child_node_id >=
+          static_cast<int>(chance_transitions_by_child_id_.size()) ||
+      chance_transitions_by_child_id_[static_cast<std::size_t>(child_node_id)]
+              .child_node_id != child_node_id) {
     throw std::invalid_argument("Chance transition child node not found");
   }
-  return iterator->second;
+  return chance_transitions_by_child_id_[static_cast<std::size_t>(
+      child_node_id)];
+}
+
+void PokerCfrSolver::SetTerminalCfvProfilingEnabled(bool enabled) {
+  terminal_cfv_calculator_.SetProfilingEnabled(enabled);
+}
+
+void PokerCfrSolver::ResetTerminalCfvProfile() {
+  terminal_cfv_calculator_.ResetProfile();
+}
+
+game::poker::TerminalCfvCalculator::Profile
+PokerCfrSolver::TerminalCfvProfileSnapshot() const {
+  return terminal_cfv_calculator_.ProfileSnapshot();
 }
 
 void PokerCfrSolver::BuildNodeCaches() {
   node_mappings_.resize(static_cast<std::size_t>(tree_.NumNodes()), nullptr);
+  node_child_caches_.assign(static_cast<std::size_t>(tree_.NumNodes()),
+                            NodeChildCache{});
   node_ids_by_depth_.clear();
   terminal_node_ids_.clear();
   fold_terminal_items_.clear();
@@ -660,7 +679,8 @@ void PokerCfrSolver::BuildNodeCaches() {
   river_scan_terminal_batches_.clear();
   runout_terminal_batches_.clear();
   reverse_node_ids_.clear();
-  chance_transitions_by_child_.clear();
+  chance_transitions_by_child_id_.assign(
+      static_cast<std::size_t>(tree_.NumNodes()), IsoTransition{});
 
   std::unordered_map<std::string, TerminalWorkBatch> river_matrix_items_by_key;
   std::unordered_map<std::string, TerminalWorkBatch> river_scan_items_by_key;
@@ -679,6 +699,16 @@ void PokerCfrSolver::BuildNodeCaches() {
         node.node_id);
     node_mappings_[static_cast<std::size_t>(node.node_id)] =
         &mapping_table_.Get(node.node_state->Board());
+    node_child_caches_[static_cast<std::size_t>(node.node_id)] =
+        NodeChildCache{node.children_offset, node.num_children};
+    for (int child_index = 0; child_index < node.num_children;
+         ++child_index) {
+      const int expected_child_id = node.children_offset + child_index;
+      if (tree_.ChildNodeIdAt(node.node_id, child_index) !=
+          expected_child_id) {
+        throw std::runtime_error("Poker tree child ids must be contiguous");
+      }
+    }
     reverse_node_ids_.push_back(node.node_id);
     if (node.node_state->IsTerminal()) {
       terminal_node_ids_.push_back(node.node_id);
@@ -737,9 +767,9 @@ void PokerCfrSolver::BuildNodeCaches() {
         game::poker::NodeState::kChancePlayer) {
       for (int child_index = 0; child_index < node.num_children;
            ++child_index) {
-        const int child_id = tree_.ChildNodeIdAt(node.node_id, child_index);
-        chance_transitions_by_child_.emplace(
-            child_id, BuildChanceTransition(node.node_id, child_id));
+        const int child_id = node.children_offset + child_index;
+        chance_transitions_by_child_id_[static_cast<std::size_t>(child_id)] =
+            BuildChanceTransition(node.node_id, child_id);
       }
     }
   }
@@ -819,10 +849,12 @@ void PokerCfrSolver::PropagatePlayerReach(
     const game::poker::PokerTreeNode& node, int hero_player) {
   const int actor = node.node_state->ActorPlayer();
   const NodeCfrLayout& layout = storage_.Layout(node.node_id);
+  const NodeChildCache& child_cache =
+      node_child_caches_[static_cast<std::size_t>(node.node_id)];
   const float* parent_reach = storage_.ReachBlock(node.node_id, actor);
   const float* strategy = storage_.StrategyBlock(node.node_id);
   for (int action = 0; action < layout.num_actions; ++action) {
-    const int child_id = tree_.ChildNodeIdAt(node.node_id, action);
+    const int child_id = child_cache.first_child_id + action;
     float* child_reach = storage_.ReachBlock(child_id, actor);
     const float* action_strategy =
         strategy + static_cast<std::size_t>(action * layout.num_hands);
@@ -849,8 +881,10 @@ void PokerCfrSolver::PropagateAveragePlayerReach(
     const game::poker::PokerTreeNode& node, float average_epsilon) {
   const int actor = node.node_state->ActorPlayer();
   const NodeCfrLayout& layout = storage_.Layout(node.node_id);
+  const NodeChildCache& child_cache =
+      node_child_caches_[static_cast<std::size_t>(node.node_id)];
   for (int action = 0; action < layout.num_actions; ++action) {
-    const int child_id = tree_.ChildNodeIdAt(node.node_id, action);
+    const int child_id = child_cache.first_child_id + action;
     for (int hand = 0; hand < layout.num_hands; ++hand) {
       storage_.ReachAt(child_id, actor, hand) =
           storage_.ReachAt(node.node_id, actor, hand) *
@@ -861,8 +895,11 @@ void PokerCfrSolver::PropagateAveragePlayerReach(
 
 void PokerCfrSolver::PropagateChanceReach(
     const game::poker::PokerTreeNode& node) {
-  for (int child_index = 0; child_index < node.num_children; ++child_index) {
-    const int child_id = tree_.ChildNodeIdAt(node.node_id, child_index);
+  const NodeChildCache& child_cache =
+      node_child_caches_[static_cast<std::size_t>(node.node_id)];
+  for (int child_index = 0; child_index < child_cache.num_children;
+       ++child_index) {
+    const int child_id = child_cache.first_child_id + child_index;
     const IsoTransition& transition = ChanceTransition(child_id);
     for (int player = 0; player < game::poker::GameBasic::kNumPlayers;
          ++player) {
@@ -959,8 +996,11 @@ void PokerCfrSolver::BackwardChanceNode(
     storage_.CfvAt(node.node_id, player, hand) = 0.0f;
   }
 
-  for (int child_index = 0; child_index < node.num_children; ++child_index) {
-    const int child_id = tree_.ChildNodeIdAt(node.node_id, child_index);
+  const NodeChildCache& child_cache =
+      node_child_caches_[static_cast<std::size_t>(node.node_id)];
+  for (int child_index = 0; child_index < child_cache.num_children;
+       ++child_index) {
+    const int child_id = child_cache.first_child_id + child_index;
     const IsoTransition& transition = ChanceTransition(child_id);
     for (const IsoTransitionEdge& edge : transition.edges) {
       storage_.CfvAt(node.node_id, player, edge.parent_iso) +=
@@ -974,22 +1014,27 @@ void PokerCfrSolver::BackwardPlayerNode(
     const game::poker::PokerTreeNode& node, int hero_player) {
   const int actor = node.node_state->ActorPlayer();
   const NodeCfrLayout& layout = storage_.Layout(node.node_id);
+  const NodeChildCache& child_cache =
+      node_child_caches_[static_cast<std::size_t>(node.node_id)];
   const float* strategy = storage_.StrategyBlock(node.node_id);
 
   float* node_cfv = storage_.CfvBlock(node.node_id, hero_player);
-  for (int hand = 0; hand < layout.num_hands; ++hand) {
-    double value = 0.0;
-    for (int action = 0; action < layout.num_actions; ++action) {
-      const int child_id = tree_.ChildNodeIdAt(node.node_id, action);
-      const float* child_cfv = storage_.CfvBlock(child_id, hero_player);
-      const double child_value = child_cfv[hand];
-      value += hero_player == actor
-                   ? static_cast<double>(
-                         strategy[action * layout.num_hands + hand]) *
-                         child_value
-                   : child_value;
+  std::fill(node_cfv, node_cfv + layout.num_hands, 0.0f);
+
+  for (int action = 0; action < layout.num_actions; ++action) {
+    const int child_id = child_cache.first_child_id + action;
+    const float* child_cfv = storage_.CfvBlock(child_id, hero_player);
+    const float* action_strategy =
+        strategy + static_cast<std::size_t>(action * layout.num_hands);
+    if (hero_player == actor) {
+      for (int hand = 0; hand < layout.num_hands; ++hand) {
+        node_cfv[hand] += action_strategy[hand] * child_cfv[hand];
+      }
+    } else {
+      for (int hand = 0; hand < layout.num_hands; ++hand) {
+        node_cfv[hand] += child_cfv[hand];
+      }
     }
-    node_cfv[hand] = static_cast<float>(value);
   }
 
   if (actor != hero_player) {
@@ -999,38 +1044,45 @@ void PokerCfrSolver::BackwardPlayerNode(
   float* regret = storage_.RegretBlock(node.node_id);
   float* mutable_strategy = storage_.StrategyBlock(node.node_id);
   const float* actor_node_cfv = storage_.CfvBlock(node.node_id, actor);
+  thread_local std::vector<float> positive_sum;
+  positive_sum.assign(static_cast<std::size_t>(layout.num_hands), 0.0f);
 
-  for (int hand = 0; hand < layout.num_hands; ++hand) {
-    float positive_sum = 0.0f;
-    for (int action = 0; action < layout.num_actions; ++action) {
-      const int index = action * layout.num_hands + hand;
-      const int child_id = tree_.ChildNodeIdAt(node.node_id, action);
-      const float* child_cfv = storage_.CfvBlock(child_id, actor);
-      regret[index] += child_cfv[hand] - actor_node_cfv[hand];
-      if (regret[index] > 0.0f) {
-        positive_sum += regret[index];
+  for (int action = 0; action < layout.num_actions; ++action) {
+    const int child_id = child_cache.first_child_id + action;
+    const float* child_cfv = storage_.CfvBlock(child_id, actor);
+    float* action_regret =
+        regret + static_cast<std::size_t>(action * layout.num_hands);
+    for (int hand = 0; hand < layout.num_hands; ++hand) {
+      const float updated_regret =
+          action_regret[hand] + child_cfv[hand] - actor_node_cfv[hand];
+      action_regret[hand] = updated_regret;
+      if (updated_regret > 0.0f) {
+        positive_sum[static_cast<std::size_t>(hand)] += updated_regret;
       }
     }
+  }
 
-    if (positive_sum <= 0.0f) {
-      const float uniform = 1.0f / static_cast<float>(layout.num_actions);
-      for (int action = 0; action < layout.num_actions; ++action) {
-        mutable_strategy[action * layout.num_hands + hand] = uniform;
-      }
-    } else {
-      for (int action = 0; action < layout.num_actions; ++action) {
-        const int index = action * layout.num_hands + hand;
-        mutable_strategy[index] =
-            std::max(0.0f, regret[index]) / positive_sum;
-      }
-    }
-
-    for (int action = 0; action < layout.num_actions; ++action) {
-      const int index = action * layout.num_hands + hand;
-      if (regret[index] > 0.0f) {
-        regret[index] *= current_positive_regret_discount_;
-      } else if (regret[index] < 0.0f) {
-        regret[index] *= current_negative_regret_discount_;
+  const float uniform = 1.0f / static_cast<float>(layout.num_actions);
+  for (int action = 0; action < layout.num_actions; ++action) {
+    float* action_regret =
+        regret + static_cast<std::size_t>(action * layout.num_hands);
+    float* action_strategy =
+        mutable_strategy +
+        static_cast<std::size_t>(action * layout.num_hands);
+    for (int hand = 0; hand < layout.num_hands; ++hand) {
+      const float updated_regret = action_regret[hand];
+      const float hand_positive_sum =
+          positive_sum[static_cast<std::size_t>(hand)];
+      action_strategy[hand] =
+          hand_positive_sum > 0.0f
+              ? std::max(0.0f, updated_regret) / hand_positive_sum
+              : uniform;
+      if (updated_regret > 0.0f) {
+        action_regret[hand] =
+            updated_regret * current_positive_regret_discount_;
+      } else if (updated_regret < 0.0f) {
+        action_regret[hand] =
+            updated_regret * current_negative_regret_discount_;
       }
     }
   }
@@ -1072,13 +1124,15 @@ void PokerCfrSolver::BackwardAveragePlayerNode(
     const game::poker::PokerTreeNode& node, float average_epsilon) {
   const int actor = node.node_state->ActorPlayer();
   const NodeCfrLayout& layout = storage_.Layout(node.node_id);
+  const NodeChildCache& child_cache =
+      node_child_caches_[static_cast<std::size_t>(node.node_id)];
 
   for (int player = 0; player < game::poker::GameBasic::kNumPlayers;
        ++player) {
     for (int hand = 0; hand < layout.num_hands; ++hand) {
       double value = 0.0;
       for (int action = 0; action < layout.num_actions; ++action) {
-        const int child_id = tree_.ChildNodeIdAt(node.node_id, action);
+        const int child_id = child_cache.first_child_id + action;
         const double child_value =
             storage_.CfvAt(child_id, player, hand);
         value += player == actor

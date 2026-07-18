@@ -2,7 +2,6 @@
 
 #include <array>
 #include <memory>
-#include <unordered_map>
 #include <vector>
 
 #include "algorithm/cfr_storage.h"
@@ -104,9 +103,18 @@ class PokerCfrSolver {
   const std::vector<int>& TerminalNodeIds() const;
   const std::vector<int>& ReverseNodeIds() const;
   const IsoTransition& ChanceTransition(int child_node_id) const;
+  void SetTerminalCfvProfilingEnabled(bool enabled);
+  void ResetTerminalCfvProfile();
+  game::poker::TerminalCfvCalculator::Profile TerminalCfvProfileSnapshot()
+      const;
 
  private:
   class ThreadPool;
+  struct NodeChildCache {
+    int first_child_id = -1;
+    int num_children = 0;
+  };
+
   struct TerminalWorkItem {
     int node_id = -1;
     const game::poker::NodeState* node_state = nullptr;
@@ -146,6 +154,7 @@ class PokerCfrSolver {
   game::poker::SevenCardLookupTable evaluator_;
   game::poker::TerminalCfvCalculator terminal_cfv_calculator_;
   std::vector<const game::poker::IsomorphicMapping*> node_mappings_;
+  std::vector<NodeChildCache> node_child_caches_;
   std::vector<std::vector<int>> node_ids_by_depth_;
   std::vector<int> terminal_node_ids_;
   std::vector<TerminalWorkItem> fold_terminal_items_;
@@ -153,7 +162,7 @@ class PokerCfrSolver {
   std::vector<TerminalWorkBatch> river_scan_terminal_batches_;
   std::vector<TerminalWorkBatch> runout_terminal_batches_;
   std::vector<int> reverse_node_ids_;
-  std::unordered_map<int, IsoTransition> chance_transitions_by_child_;
+  std::vector<IsoTransition> chance_transitions_by_child_id_;
   int num_threads_ = 1;
   std::unique_ptr<ThreadPool> thread_pool_;
   int max_iterations_ = 500;

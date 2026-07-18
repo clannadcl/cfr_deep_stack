@@ -456,6 +456,34 @@ void PrintProfileWindow(const std::string& prefix, int iteration_begin,
             << '\n';
 }
 
+void PrintTerminalProfileWindow(
+    const std::string& prefix, int iteration_begin, int iteration_end,
+    const fisher::game::poker::TerminalCfvCalculator::Profile& profile) {
+  std::cout << prefix
+            << " iteration_begin=" << iteration_begin
+            << " iteration_end=" << iteration_end
+            << " fold_calls=" << profile.fold_calls
+            << " fold_ms=" << profile.fold_ms
+            << " river_matrix_batch_calls="
+            << profile.river_matrix_batch_calls
+            << " river_scan_batch_calls=" << profile.river_scan_batch_calls
+            << " river_scan_items=" << profile.river_scan_items
+            << " river_scan_cache_ms=" << profile.river_scan_cache_ms
+            << " river_scan_stats_ms=" << profile.river_scan_stats_ms
+            << " river_scan_group_stats_ms="
+            << profile.river_scan_group_stats_ms
+            << " river_scan_combine_ms=" << profile.river_scan_combine_ms
+            << " river_scan_accumulate_ms="
+            << profile.river_scan_accumulate_ms
+            << " runout_batch_calls=" << profile.runout_batch_calls
+            << " runout_batch_items=" << profile.runout_batch_items
+            << " runout_cache_ms=" << profile.runout_cache_ms
+            << " runout_matrix_ms=" << profile.runout_matrix_ms
+            << " runout_multiply_ms=" << profile.runout_multiply_ms
+            << " runout_valid_mass_ms=" << profile.runout_valid_mass_ms
+            << " runout_combine_ms=" << profile.runout_combine_ms << '\n';
+}
+
 }  // namespace
 
 int main() {
@@ -622,6 +650,8 @@ int main() {
   float last_exploitability = 0.0f;
   int river_profile_window_begin = 1;
   std::array<ProfileAccumulator, 2> river_profile_windows;
+  river_solver.SetTerminalCfvProfilingEnabled(true);
+  river_solver.ResetTerminalCfvProfile();
   const auto river_solve_begin = std::chrono::steady_clock::now();
   for (int iteration = 1; iteration <= 500; ++iteration) {
     river_profile_windows[0].Add(river_solver.RunHeroPassProfiled(0));
@@ -633,9 +663,13 @@ int main() {
                        iteration, 0, river_profile_windows[0]);
     PrintProfileWindow("river_profile_window", river_profile_window_begin,
                        iteration, 1, river_profile_windows[1]);
+    PrintTerminalProfileWindow(
+        "river_terminal_profile_window", river_profile_window_begin,
+        iteration, river_solver.TerminalCfvProfileSnapshot());
     river_profile_window_begin = iteration + 1;
     river_profile_windows[0].Reset();
     river_profile_windows[1].Reset();
+    river_solver.ResetTerminalCfvProfile();
 
     const auto check_begin = std::chrono::steady_clock::now();
     const fisher::algorithm::ExploitabilityResult result =
