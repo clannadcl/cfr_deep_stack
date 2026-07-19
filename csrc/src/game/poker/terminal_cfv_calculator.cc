@@ -62,6 +62,27 @@ struct ReachStats {
   }
 };
 
+struct RiverMassStats {
+  double total = 0.0;
+  std::array<double, GameBasic::kDeckSize> by_card{};
+
+  void Reset() {
+    total = 0.0;
+    by_card.fill(0.0);
+  }
+
+  void Add(const RawHandEntry& hand, double mass) {
+    total += mass;
+    by_card[hand.high_card] += mass;
+    by_card[hand.low_card] += mass;
+  }
+
+  double Excluding(const RawHandEntry& hand, double self_mass) const {
+    return total - by_card[hand.high_card] - by_card[hand.low_card] +
+           self_mass;
+  }
+};
+
 std::string MatrixKey(const IsomorphicMapping& mapping) {
   return mapping.RawBoard().ToString() + "#" +
          std::to_string(mapping.NumIsoHands());
@@ -161,21 +182,6 @@ std::vector<std::pair<std::size_t, std::size_t>> BuildStrengthGroups(
     group_begin = group_end;
   }
   return groups;
-}
-
-void BuildStatsForRangeInto(const std::vector<StrengthItem>& items,
-                            std::size_t begin, std::size_t end,
-                            const float* opponent_reach,
-                            ReachStats* stats) {
-  stats->Reset();
-  for (std::size_t index = begin; index < end; ++index) {
-    const RawHandEntry& hand = items[index].hand;
-    const double iso_reach = opponent_reach[hand.iso_index];
-    if (iso_reach == 0.0) {
-      continue;
-    }
-    stats->Add(hand, iso_reach * hand.iso_normalization);
-  }
 }
 
 #if defined(FISHER_USE_OPENBLAS)
@@ -316,7 +322,6 @@ void TerminalCfvCalculator::AddProfile(const Profile& profile) {
   }
   profile_.fold_calls += profile.fold_calls;
   profile_.runout_batch_calls += profile.runout_batch_calls;
-  profile_.river_matrix_batch_calls += profile.river_matrix_batch_calls;
   profile_.river_scan_batch_calls += profile.river_scan_batch_calls;
   profile_.river_scan_items += profile.river_scan_items;
   profile_.runout_batch_items += profile.runout_batch_items;
@@ -332,6 +337,10 @@ void TerminalCfvCalculator::AddProfile(const Profile& profile) {
   profile_.river_scan_group_stats_ms += profile.river_scan_group_stats_ms;
   profile_.river_scan_combine_ms += profile.river_scan_combine_ms;
   profile_.river_scan_accumulate_ms += profile.river_scan_accumulate_ms;
+  profile_.river_scan_initial_mass_ms += profile.river_scan_initial_mass_ms;
+  profile_.river_scan_group_to_tie_ms += profile.river_scan_group_to_tie_ms;
+  profile_.river_scan_assign_ms += profile.river_scan_assign_ms;
+  profile_.river_scan_group_to_win_ms += profile.river_scan_group_to_win_ms;
 }
 
 std::vector<float> TerminalCfvCalculator::Calculate(
@@ -431,16 +440,6 @@ void TerminalCfvCalculator::CalculateRunoutShowdownBatch(
 
 void TerminalCfvCalculator::CalculateRiverShowdownBatch(
     const std::vector<BatchItem>& items) {
-  if (ProfilingEnabled() && !items.empty()) {
-    Profile profile;
-    profile.river_matrix_batch_calls = 1;
-    AddProfile(profile);
-  }
-  CalculateRunoutShowdownBatch(items);
-}
-
-void TerminalCfvCalculator::CalculateRiverShowdownScanBatch(
-    const std::vector<BatchItem>& items) {
   if (items.empty()) {
     return;
   }
@@ -449,12 +448,14 @@ void TerminalCfvCalculator::CalculateRiverShowdownScanBatch(
   profile.river_scan_batch_calls = 1;
   profile.river_scan_items = static_cast<int64_t>(items.size());
   const IsomorphicMapping& mapping = *items.front().mapping;
-  const Clock::time_point cache_begin = Clock::now();
+  Clock::time_point begin;
+  if (profiling) {
+    begin = Clock::now();
+  }
   const RiverShowdownCache& cache = RiverCacheFor(mapping);
-  const Clock::time_point cache_end = Clock::now();
   if (profiling) {
     profile.river_scan_cache_ms =
-        MillisecondsBetween(cache_begin, cache_end);
+        MillisecondsBetween(begin, Clock::now());
   }
   const int num_iso_hands = mapping.NumIsoHands();
   for (const BatchItem& item : items) {
@@ -509,64 +510,87 @@ void TerminalCfvCalculator::CalculateRiverShowdownWithCache(
     float* out_cfv) {
   const bool profiling = ProfilingEnabled();
   Profile profile;
-  ReachStats total_stats;
-  Clock::time_point begin = Clock::now();
-  BuildOpponentReachStatsInto(cache.raw_hands->hands, opponent_reach,
-                              &total_stats);
-  Clock::time_point end = Clock::now();
-  if (profiling) {
-    profile.river_scan_stats_ms += MillisecondsBetween(begin, end);
-  }
+  Clock::time_point begin;
 
   const PlayerTerminalPayoff& payoff = node.GetTerminalPayoff().players[player];
-  begin = Clock::now();
-  std::fill(out_cfv, out_cfv + num_iso_hands, 0.0f);
-  end = Clock::now();
+  RiverMassStats mass;
   if (profiling) {
-    profile.river_scan_combine_ms += MillisecondsBetween(begin, end);
+    begin = Clock::now();
   }
-  ReachStats weaker_stats;
-  ReachStats tie_stats;
+  mass.Reset();
+  for (const StrengthItem& item : cache.sorted_items) {
+    const RawHandEntry& hand = item.hand;
+    const double reach =
+        static_cast<double>(opponent_reach[hand.iso_index]) *
+        hand.iso_normalization;
+    if (reach != 0.0) {
+      mass.Add(hand, reach * static_cast<double>(payoff.lose));
+    }
+  }
+  if (profiling) {
+    profile.river_scan_initial_mass_ms +=
+        MillisecondsBetween(begin, Clock::now());
+  }
+
+  if (profiling) {
+    begin = Clock::now();
+  }
+  std::fill(out_cfv, out_cfv + num_iso_hands, 0.0f);
+  if (profiling) {
+    profile.river_scan_combine_ms += MillisecondsBetween(begin, Clock::now());
+  }
 
   for (const auto& group : cache.strength_groups) {
     const std::size_t group_begin = group.first;
     const std::size_t group_end = group.second;
-    begin = Clock::now();
-    BuildStatsForRangeInto(cache.sorted_items, group_begin, group_end,
-                           opponent_reach, &tie_stats);
-    end = Clock::now();
-    if (profiling) {
-      profile.river_scan_group_stats_ms += MillisecondsBetween(begin, end);
-    }
-    begin = Clock::now();
-    for (std::size_t index = group_begin; index < group_end; ++index) {
-      const RawHandEntry& hand = cache.sorted_items[index].hand;
-      const double valid_mass = total_stats.Excluding(hand);
-      const double win_mass = weaker_stats.Excluding(hand);
-      const double tie_mass = tie_stats.Excluding(hand);
-      const double lose_mass = valid_mass - win_mass - tie_mass;
-      const double raw_cfv = static_cast<double>(payoff.win) * win_mass +
-                             static_cast<double>(payoff.lose) * lose_mass +
-                             static_cast<double>(payoff.chop) * tie_mass;
-      out_cfv[hand.iso_index] +=
-          static_cast<float>(raw_cfv * hand.iso_normalization);
-    }
-    end = Clock::now();
-    if (profiling) {
-      profile.river_scan_combine_ms += MillisecondsBetween(begin, end);
-    }
 
-    begin = Clock::now();
+    if (profiling) {
+      begin = Clock::now();
+    }
     for (std::size_t index = group_begin; index < group_end; ++index) {
       const RawHandEntry& hand = cache.sorted_items[index].hand;
-      const double iso_reach = opponent_reach[hand.iso_index];
-      if (iso_reach != 0.0) {
-        weaker_stats.Add(hand, iso_reach * hand.iso_normalization);
+      const double reach =
+          static_cast<double>(opponent_reach[hand.iso_index]) *
+          hand.iso_normalization;
+      if (reach != 0.0) {
+        mass.Add(hand, reach * static_cast<double>(payoff.chop - payoff.lose));
       }
     }
-    end = Clock::now();
     if (profiling) {
-      profile.river_scan_accumulate_ms += MillisecondsBetween(begin, end);
+      profile.river_scan_group_to_tie_ms +=
+          MillisecondsBetween(begin, Clock::now());
+    }
+
+    if (profiling) {
+      begin = Clock::now();
+    }
+    for (std::size_t index = group_begin; index < group_end; ++index) {
+      const RawHandEntry& hand = cache.sorted_items[index].hand;
+      const double self_mass =
+          static_cast<double>(opponent_reach[hand.iso_index]) *
+          hand.iso_normalization * static_cast<double>(payoff.chop);
+      out_cfv[hand.iso_index] += static_cast<float>(
+          mass.Excluding(hand, self_mass) * hand.iso_normalization);
+    }
+    if (profiling) {
+      profile.river_scan_assign_ms += MillisecondsBetween(begin, Clock::now());
+    }
+
+    if (profiling) {
+      begin = Clock::now();
+    }
+    for (std::size_t index = group_begin; index < group_end; ++index) {
+      const RawHandEntry& hand = cache.sorted_items[index].hand;
+      const double reach =
+          static_cast<double>(opponent_reach[hand.iso_index]) *
+          hand.iso_normalization;
+      if (reach != 0.0) {
+        mass.Add(hand, reach * static_cast<double>(payoff.win - payoff.chop));
+      }
+    }
+    if (profiling) {
+      profile.river_scan_group_to_win_ms +=
+          MillisecondsBetween(begin, Clock::now());
     }
   }
   if (profiling) {

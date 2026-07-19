@@ -19,7 +19,6 @@ class TerminalCfvCalculator {
   struct Profile {
     int64_t fold_calls = 0;
     int64_t runout_batch_calls = 0;
-    int64_t river_matrix_batch_calls = 0;
     int64_t river_scan_batch_calls = 0;
     int64_t river_scan_items = 0;
     int64_t runout_batch_items = 0;
@@ -35,6 +34,10 @@ class TerminalCfvCalculator {
     double river_scan_group_stats_ms = 0.0;
     double river_scan_combine_ms = 0.0;
     double river_scan_accumulate_ms = 0.0;
+    double river_scan_initial_mass_ms = 0.0;
+    double river_scan_group_to_tie_ms = 0.0;
+    double river_scan_assign_ms = 0.0;
+    double river_scan_group_to_win_ms = 0.0;
   };
 
   TerminalCfvCalculator(const GameBasic& game_basic,
@@ -57,7 +60,6 @@ class TerminalCfvCalculator {
 
   void CalculateRunoutShowdownBatch(const std::vector<BatchItem>& items);
   void CalculateRiverShowdownBatch(const std::vector<BatchItem>& items);
-  void CalculateRiverShowdownScanBatch(const std::vector<BatchItem>& items);
   void SetProfilingEnabled(bool enabled);
   bool ProfilingEnabled() const;
   void ResetProfile();

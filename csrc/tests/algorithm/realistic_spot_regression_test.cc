@@ -400,7 +400,23 @@ void PrintHeroProfile(int iteration, int player,
             << " init_reach_ms=" << profile.initialize_root_reach_ms
             << " forward_ms=" << profile.forward_reach_ms
             << " terminal_cfv_ms=" << profile.terminal_cfv_ms
-            << " backward_ms=" << profile.backward_update_ms << '\n';
+            << " backward_ms=" << profile.backward_update_ms
+            << " backward_chance_ms=" << profile.backward_chance_ms
+            << " backward_player_propagate_ms="
+            << profile.backward_player_propagate_ms
+            << " backward_player_regret_ms="
+            << profile.backward_player_regret_ms
+            << " backward_chance_nodes=" << profile.backward_chance_nodes
+            << " backward_player_nodes=" << profile.backward_player_nodes
+            << " backward_hero_nodes=" << profile.backward_hero_nodes
+            << " backward_opponent_nodes=" << profile.backward_opponent_nodes
+            << " backward_levels=" << profile.backward_levels
+            << " backward_singleton_levels="
+            << profile.backward_singleton_levels
+            << " backward_small_levels=" << profile.backward_small_levels
+            << " backward_max_level_width="
+            << profile.backward_max_level_width
+            << '\n';
 }
 
 struct ProfileAccumulator {
@@ -409,6 +425,17 @@ struct ProfileAccumulator {
   double forward_reach_ms = 0.0;
   double terminal_cfv_ms = 0.0;
   double backward_update_ms = 0.0;
+  double backward_chance_ms = 0.0;
+  double backward_player_propagate_ms = 0.0;
+  double backward_player_regret_ms = 0.0;
+  int backward_chance_nodes = 0;
+  int backward_player_nodes = 0;
+  int backward_hero_nodes = 0;
+  int backward_opponent_nodes = 0;
+  int backward_levels = 0;
+  int backward_singleton_levels = 0;
+  int backward_small_levels = 0;
+  int backward_max_level_width = 0;
   double total_ms = 0.0;
 
   void Add(const fisher::algorithm::PokerCfrSolver::HeroPassProfile& profile) {
@@ -417,6 +444,18 @@ struct ProfileAccumulator {
     forward_reach_ms += profile.forward_reach_ms;
     terminal_cfv_ms += profile.terminal_cfv_ms;
     backward_update_ms += profile.backward_update_ms;
+    backward_chance_ms += profile.backward_chance_ms;
+    backward_player_propagate_ms += profile.backward_player_propagate_ms;
+    backward_player_regret_ms += profile.backward_player_regret_ms;
+    backward_chance_nodes += profile.backward_chance_nodes;
+    backward_player_nodes += profile.backward_player_nodes;
+    backward_hero_nodes += profile.backward_hero_nodes;
+    backward_opponent_nodes += profile.backward_opponent_nodes;
+    backward_levels += profile.backward_levels;
+    backward_singleton_levels += profile.backward_singleton_levels;
+    backward_small_levels += profile.backward_small_levels;
+    backward_max_level_width =
+        std::max(backward_max_level_width, profile.backward_max_level_width);
     total_ms += profile.total_ms;
   }
 
@@ -426,6 +465,17 @@ struct ProfileAccumulator {
     forward_reach_ms = 0.0;
     terminal_cfv_ms = 0.0;
     backward_update_ms = 0.0;
+    backward_chance_ms = 0.0;
+    backward_player_propagate_ms = 0.0;
+    backward_player_regret_ms = 0.0;
+    backward_chance_nodes = 0;
+    backward_player_nodes = 0;
+    backward_hero_nodes = 0;
+    backward_opponent_nodes = 0;
+    backward_levels = 0;
+    backward_singleton_levels = 0;
+    backward_small_levels = 0;
+    backward_max_level_width = 0;
     total_ms = 0.0;
   }
 };
@@ -453,6 +503,41 @@ void PrintProfileWindow(const std::string& prefix, int iteration_begin,
             << " terminal_cfv_avg_ms=" << profile.terminal_cfv_ms / passes
             << " backward_ms=" << profile.backward_update_ms
             << " backward_avg_ms=" << profile.backward_update_ms / passes
+            << " backward_chance_ms=" << profile.backward_chance_ms
+            << " backward_chance_avg_ms="
+            << profile.backward_chance_ms / passes
+            << " backward_player_propagate_ms="
+            << profile.backward_player_propagate_ms
+            << " backward_player_propagate_avg_ms="
+            << profile.backward_player_propagate_ms / passes
+            << " backward_player_regret_ms="
+            << profile.backward_player_regret_ms
+            << " backward_player_regret_avg_ms="
+            << profile.backward_player_regret_ms / passes
+            << " backward_chance_nodes=" << profile.backward_chance_nodes
+            << " backward_chance_nodes_avg="
+            << profile.backward_chance_nodes / passes
+            << " backward_player_nodes=" << profile.backward_player_nodes
+            << " backward_player_nodes_avg="
+            << profile.backward_player_nodes / passes
+            << " backward_hero_nodes=" << profile.backward_hero_nodes
+            << " backward_hero_nodes_avg="
+            << profile.backward_hero_nodes / passes
+            << " backward_opponent_nodes="
+            << profile.backward_opponent_nodes
+            << " backward_opponent_nodes_avg="
+            << profile.backward_opponent_nodes / passes
+            << " backward_levels=" << profile.backward_levels
+            << " backward_levels_avg=" << profile.backward_levels / passes
+            << " backward_singleton_levels="
+            << profile.backward_singleton_levels
+            << " backward_singleton_levels_avg="
+            << profile.backward_singleton_levels / passes
+            << " backward_small_levels=" << profile.backward_small_levels
+            << " backward_small_levels_avg="
+            << profile.backward_small_levels / passes
+            << " backward_max_level_width="
+            << profile.backward_max_level_width
             << '\n';
 }
 
@@ -464,8 +549,6 @@ void PrintTerminalProfileWindow(
             << " iteration_end=" << iteration_end
             << " fold_calls=" << profile.fold_calls
             << " fold_ms=" << profile.fold_ms
-            << " river_matrix_batch_calls="
-            << profile.river_matrix_batch_calls
             << " river_scan_batch_calls=" << profile.river_scan_batch_calls
             << " river_scan_items=" << profile.river_scan_items
             << " river_scan_cache_ms=" << profile.river_scan_cache_ms
@@ -475,6 +558,13 @@ void PrintTerminalProfileWindow(
             << " river_scan_combine_ms=" << profile.river_scan_combine_ms
             << " river_scan_accumulate_ms="
             << profile.river_scan_accumulate_ms
+            << " river_scan_initial_mass_ms="
+            << profile.river_scan_initial_mass_ms
+            << " river_scan_group_to_tie_ms="
+            << profile.river_scan_group_to_tie_ms
+            << " river_scan_assign_ms=" << profile.river_scan_assign_ms
+            << " river_scan_group_to_win_ms="
+            << profile.river_scan_group_to_win_ms
             << " runout_batch_calls=" << profile.runout_batch_calls
             << " runout_batch_items=" << profile.runout_batch_items
             << " runout_cache_ms=" << profile.runout_cache_ms
@@ -664,8 +754,7 @@ int main() {
   float last_exploitability = 0.0f;
   int river_profile_window_begin = 1;
   std::array<ProfileAccumulator, 2> river_profile_windows;
-  river_solver.SetTerminalCfvProfilingEnabled(true);
-  river_solver.ResetTerminalCfvProfile();
+  river_solver.SetTerminalCfvProfilingEnabled(false);
   const auto river_solve_begin = std::chrono::steady_clock::now();
   for (int iteration = 1; iteration <= 500; ++iteration) {
     river_profile_windows[0].Add(river_solver.RunHeroPassProfiled(0));
@@ -677,13 +766,9 @@ int main() {
                        iteration, 0, river_profile_windows[0]);
     PrintProfileWindow("river_profile_window", river_profile_window_begin,
                        iteration, 1, river_profile_windows[1]);
-    PrintTerminalProfileWindow(
-        "river_terminal_profile_window", river_profile_window_begin,
-        iteration, river_solver.TerminalCfvProfileSnapshot());
     river_profile_window_begin = iteration + 1;
     river_profile_windows[0].Reset();
     river_profile_windows[1].Reset();
-    river_solver.ResetTerminalCfvProfile();
 
     const auto check_begin = std::chrono::steady_clock::now();
     const fisher::algorithm::ExploitabilityResult result =

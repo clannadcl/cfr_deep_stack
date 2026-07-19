@@ -1,6 +1,7 @@
 #pragma once
 
 #include <array>
+#include <cstdint>
 #include <memory>
 #include <vector>
 
@@ -38,6 +39,17 @@ class PokerCfrSolver {
     double forward_reach_ms = 0.0;
     double terminal_cfv_ms = 0.0;
     double backward_update_ms = 0.0;
+    double backward_chance_ms = 0.0;
+    double backward_player_propagate_ms = 0.0;
+    double backward_player_regret_ms = 0.0;
+    int backward_chance_nodes = 0;
+    int backward_player_nodes = 0;
+    int backward_hero_nodes = 0;
+    int backward_opponent_nodes = 0;
+    int backward_levels = 0;
+    int backward_singleton_levels = 0;
+    int backward_small_levels = 0;
+    int backward_max_level_width = 0;
     double total_ms = 0.0;
   };
 
@@ -115,6 +127,26 @@ class PokerCfrSolver {
     int num_children = 0;
   };
 
+  struct BackwardPassProfile {
+    double chance_ms = 0.0;
+    double player_propagate_ms = 0.0;
+    double player_regret_ms = 0.0;
+    int chance_nodes = 0;
+    int player_nodes = 0;
+    int hero_nodes = 0;
+    int opponent_nodes = 0;
+    int levels = 0;
+    int singleton_levels = 0;
+    int small_levels = 0;
+    int max_level_width = 0;
+  };
+
+  struct BackwardNodeProfile {
+    std::uint64_t propagate_ns = 0;
+    std::uint64_t regret_ns = 0;
+    bool updated_regret = false;
+  };
+
   struct TerminalWorkItem {
     int node_id = -1;
     const game::poker::NodeState* node_state = nullptr;
@@ -136,8 +168,8 @@ class PokerCfrSolver {
   void ComputeTerminalCfvs(int player);
   void BackwardAndUpdate(int hero_player);
   void BackwardChanceNode(const game::poker::PokerTreeNode& node, int player);
-  void BackwardPlayerNode(const game::poker::PokerTreeNode& node,
-                          int hero_player);
+  BackwardNodeProfile BackwardPlayerNode(
+      const game::poker::PokerTreeNode& node, int hero_player);
   void ApplyRegretDiscount(int node_id);
   void ApplyAverageStrategyDiscount(int node_id);
   void BackwardAveragePlayerNode(const game::poker::PokerTreeNode& node,
@@ -158,8 +190,7 @@ class PokerCfrSolver {
   std::vector<std::vector<int>> node_ids_by_depth_;
   std::vector<int> terminal_node_ids_;
   std::vector<TerminalWorkItem> fold_terminal_items_;
-  std::vector<TerminalWorkBatch> river_matrix_terminal_batches_;
-  std::vector<TerminalWorkBatch> river_scan_terminal_batches_;
+  std::vector<TerminalWorkBatch> river_terminal_batches_;
   std::vector<TerminalWorkBatch> runout_terminal_batches_;
   std::vector<int> reverse_node_ids_;
   std::vector<IsoTransition> chance_transitions_by_child_id_;
@@ -177,6 +208,7 @@ class PokerCfrSolver {
   float current_negative_regret_discount_ = 1.0f;
   float current_average_strategy_discount_ = 1.0f;
   bool average_finalized_ = false;
+  BackwardPassProfile last_backward_profile_;
 };
 
 }  // namespace fisher::algorithm
