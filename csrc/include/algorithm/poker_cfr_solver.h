@@ -1,8 +1,9 @@
 #pragma once
 
 #include <array>
-#include <cstdint>
 #include <memory>
+#include <string>
+#include <unordered_map>
 #include <vector>
 
 #include "algorithm/cfr_storage.h"
@@ -34,25 +35,6 @@ IsoTransition BuildIsoTransition(
 
 class PokerCfrSolver {
  public:
-  struct HeroPassProfile {
-    double initialize_root_reach_ms = 0.0;
-    double forward_reach_ms = 0.0;
-    double terminal_cfv_ms = 0.0;
-    double backward_update_ms = 0.0;
-    double backward_chance_ms = 0.0;
-    double backward_player_propagate_ms = 0.0;
-    double backward_player_regret_ms = 0.0;
-    int backward_chance_nodes = 0;
-    int backward_player_nodes = 0;
-    int backward_hero_nodes = 0;
-    int backward_opponent_nodes = 0;
-    int backward_levels = 0;
-    int backward_singleton_levels = 0;
-    int backward_small_levels = 0;
-    int backward_max_level_width = 0;
-    double total_ms = 0.0;
-  };
-
   struct NodeEvDetail {
     int node_id = -1;
     int player = -1;
@@ -98,7 +80,6 @@ class PokerCfrSolver {
 
   void RunIteration();
   void RunHeroPass(int hero_player);
-  HeroPassProfile RunHeroPassProfiled(int hero_player);
   SolveResult Solve(float average_epsilon = 1e-12f);
   void FinalizeAverageStrategy(float average_epsilon = 1e-12f);
 
@@ -115,36 +96,12 @@ class PokerCfrSolver {
   const std::vector<int>& TerminalNodeIds() const;
   const std::vector<int>& ReverseNodeIds() const;
   const IsoTransition& ChanceTransition(int child_node_id) const;
-  void SetTerminalCfvProfilingEnabled(bool enabled);
-  void ResetTerminalCfvProfile();
-  game::poker::TerminalCfvCalculator::Profile TerminalCfvProfileSnapshot()
-      const;
 
  private:
   class ThreadPool;
   struct NodeChildCache {
     int first_child_id = -1;
     int num_children = 0;
-  };
-
-  struct BackwardPassProfile {
-    double chance_ms = 0.0;
-    double player_propagate_ms = 0.0;
-    double player_regret_ms = 0.0;
-    int chance_nodes = 0;
-    int player_nodes = 0;
-    int hero_nodes = 0;
-    int opponent_nodes = 0;
-    int levels = 0;
-    int singleton_levels = 0;
-    int small_levels = 0;
-    int max_level_width = 0;
-  };
-
-  struct BackwardNodeProfile {
-    std::uint64_t propagate_ns = 0;
-    std::uint64_t regret_ns = 0;
-    bool updated_regret = false;
   };
 
   struct TerminalWorkItem {
@@ -155,6 +112,9 @@ class PokerCfrSolver {
   using TerminalWorkBatch = std::vector<TerminalWorkItem>;
 
   void BuildNodeCaches();
+  std::array<std::vector<int>, 2> BuildActiveIsoHands(
+      const game::poker::IsomorphicMapping& mapping) const;
+  const std::vector<int>& ActiveIsoHands(int node_id, int player) const;
   IsoTransition BuildChanceTransition(int parent_node_id,
                                       int child_node_id) const;
   void RefreshDcfrDiscounts();
@@ -168,8 +128,8 @@ class PokerCfrSolver {
   void ComputeTerminalCfvs(int player);
   void BackwardAndUpdate(int hero_player);
   void BackwardChanceNode(const game::poker::PokerTreeNode& node, int player);
-  BackwardNodeProfile BackwardPlayerNode(
-      const game::poker::PokerTreeNode& node, int hero_player);
+  void BackwardPlayerNode(const game::poker::PokerTreeNode& node,
+                          int hero_player);
   void ApplyRegretDiscount(int node_id);
   void ApplyAverageStrategyDiscount(int node_id);
   void BackwardAveragePlayerNode(const game::poker::PokerTreeNode& node,
@@ -194,6 +154,10 @@ class PokerCfrSolver {
   std::vector<TerminalWorkBatch> runout_terminal_batches_;
   std::vector<int> reverse_node_ids_;
   std::vector<IsoTransition> chance_transitions_by_child_id_;
+  std::unordered_map<std::string, std::array<std::vector<int>, 2>>
+      active_iso_hands_by_key_;
+  std::vector<std::array<const std::vector<int>*, 2>>
+      active_iso_hands_by_node_player_;
   int num_threads_ = 1;
   std::unique_ptr<ThreadPool> thread_pool_;
   int max_iterations_ = 500;
@@ -208,7 +172,6 @@ class PokerCfrSolver {
   float current_negative_regret_discount_ = 1.0f;
   float current_average_strategy_discount_ = 1.0f;
   bool average_finalized_ = false;
-  BackwardPassProfile last_backward_profile_;
 };
 
 }  // namespace fisher::algorithm

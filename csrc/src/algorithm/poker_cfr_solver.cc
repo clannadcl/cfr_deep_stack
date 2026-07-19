@@ -3,7 +3,6 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
-#include <chrono>
 #include <cmath>
 #include <condition_variable>
 #include <cstddef>
@@ -11,6 +10,7 @@
 #include <functional>
 #include <mutex>
 #include <stdexcept>
+#include <string>
 #include <thread>
 #include <unordered_map>
 #include <utility>
@@ -69,13 +69,6 @@ bool IsPlayerNode(const game::poker::PokerTreeNode& node) {
   return !node.node_state->IsTerminal() &&
          node.node_state->ActorPlayer() !=
              game::poker::NodeState::kChancePlayer;
-}
-
-std::uint64_t ElapsedNs(std::chrono::steady_clock::time_point begin,
-                        std::chrono::steady_clock::time_point end) {
-  return static_cast<std::uint64_t>(
-      std::chrono::duration_cast<std::chrono::nanoseconds>(end - begin)
-          .count());
 }
 
 std::shared_ptr<game::poker::SubgameSetup> ValidateSetup(
@@ -194,6 +187,11 @@ std::vector<float> ComputeEvValidMass(
 
 int TransitionKey(int parent_iso, int child_iso, int child_num_hands) {
   return parent_iso * child_num_hands + child_iso;
+}
+
+std::string MappingKey(const game::poker::IsomorphicMapping& mapping) {
+  return mapping.RawBoard().ToString() + "#" +
+         std::to_string(mapping.NumIsoHands());
 }
 
 void ValidateAdjacentBoardTransition(
@@ -420,59 +418,14 @@ void PokerCfrSolver::RunIteration() {
 }
 
 void PokerCfrSolver::RunHeroPass(int hero_player) {
-  RunHeroPassProfiled(hero_player);
-}
-
-PokerCfrSolver::HeroPassProfile PokerCfrSolver::RunHeroPassProfiled(
-    int hero_player) {
-  using Clock = std::chrono::steady_clock;
-  auto elapsed_ms = [](Clock::time_point begin, Clock::time_point end) {
-    return std::chrono::duration<double, std::milli>(end - begin).count();
-  };
-
   ValidatePlayer(hero_player);
   average_finalized_ = false;
   RefreshDcfrDiscounts();
-  const auto total_begin = Clock::now();
-
-  const auto initialize_begin = Clock::now();
   InitializeRootReach();
-  const auto initialize_end = Clock::now();
-
-  const auto forward_begin = Clock::now();
   ForwardReachAndAccumulateAverage(hero_player);
-  const auto forward_end = Clock::now();
-
-  const auto terminal_begin = Clock::now();
   ComputeTerminalCfvs(hero_player);
-  const auto terminal_end = Clock::now();
-
-  const auto backward_begin = Clock::now();
   BackwardAndUpdate(hero_player);
-  const auto backward_end = Clock::now();
-
   ++hero_pass_count_;
-
-  HeroPassProfile profile;
-  profile.initialize_root_reach_ms =
-      elapsed_ms(initialize_begin, initialize_end);
-  profile.forward_reach_ms = elapsed_ms(forward_begin, forward_end);
-  profile.terminal_cfv_ms = elapsed_ms(terminal_begin, terminal_end);
-  profile.backward_update_ms = elapsed_ms(backward_begin, backward_end);
-  profile.backward_chance_ms = last_backward_profile_.chance_ms;
-  profile.backward_player_propagate_ms =
-      last_backward_profile_.player_propagate_ms;
-  profile.backward_player_regret_ms = last_backward_profile_.player_regret_ms;
-  profile.backward_chance_nodes = last_backward_profile_.chance_nodes;
-  profile.backward_player_nodes = last_backward_profile_.player_nodes;
-  profile.backward_hero_nodes = last_backward_profile_.hero_nodes;
-  profile.backward_opponent_nodes = last_backward_profile_.opponent_nodes;
-  profile.backward_levels = last_backward_profile_.levels;
-  profile.backward_singleton_levels = last_backward_profile_.singleton_levels;
-  profile.backward_small_levels = last_backward_profile_.small_levels;
-  profile.backward_max_level_width = last_backward_profile_.max_level_width;
-  profile.total_ms = elapsed_ms(total_begin, backward_end);
-  return profile;
 }
 
 PokerCfrSolver::SolveResult PokerCfrSolver::Solve(float average_epsilon) {
@@ -534,15 +487,6 @@ void PokerCfrSolver::FinalizeAverageStrategy(float average_epsilon) {
   for (auto level_it = node_ids_by_depth_.rbegin();
        level_it != node_ids_by_depth_.rend(); ++level_it) {
     const std::vector<int>& level = *level_it;
-    ++last_backward_profile_.levels;
-    if (level.size() == 1) {
-      ++last_backward_profile_.singleton_levels;
-    }
-    if (level.size() <= 4) {
-      ++last_backward_profile_.small_levels;
-    }
-    last_backward_profile_.max_level_width = std::max(
-        last_backward_profile_.max_level_width, static_cast<int>(level.size()));
     thread_pool_->ParallelFor(level.size(), [&](std::size_t index) {
       const game::poker::PokerTreeNode& node = tree_.Node(level[index]);
       if (node.node_state->IsTerminal()) {
@@ -684,21 +628,10 @@ const IsoTransition& PokerCfrSolver::ChanceTransition(
       child_node_id)];
 }
 
-void PokerCfrSolver::SetTerminalCfvProfilingEnabled(bool enabled) {
-  terminal_cfv_calculator_.SetProfilingEnabled(enabled);
-}
-
-void PokerCfrSolver::ResetTerminalCfvProfile() {
-  terminal_cfv_calculator_.ResetProfile();
-}
-
-game::poker::TerminalCfvCalculator::Profile
-PokerCfrSolver::TerminalCfvProfileSnapshot() const {
-  return terminal_cfv_calculator_.ProfileSnapshot();
-}
-
 void PokerCfrSolver::BuildNodeCaches() {
   node_mappings_.resize(static_cast<std::size_t>(tree_.NumNodes()), nullptr);
+  active_iso_hands_by_node_player_.resize(
+      static_cast<std::size_t>(tree_.NumNodes()));
   node_child_caches_.assign(static_cast<std::size_t>(tree_.NumNodes()),
                             NodeChildCache{});
   node_ids_by_depth_.clear();
@@ -707,6 +640,7 @@ void PokerCfrSolver::BuildNodeCaches() {
   river_terminal_batches_.clear();
   runout_terminal_batches_.clear();
   reverse_node_ids_.clear();
+  active_iso_hands_by_key_.clear();
   chance_transitions_by_child_id_.assign(
       static_cast<std::size_t>(tree_.NumNodes()), IsoTransition{});
 
@@ -724,6 +658,20 @@ void PokerCfrSolver::BuildNodeCaches() {
         node.node_id);
     node_mappings_[static_cast<std::size_t>(node.node_id)] =
         &mapping_table_.Get(node.node_state->Board());
+    const game::poker::IsomorphicMapping& node_mapping =
+        *node_mappings_[static_cast<std::size_t>(node.node_id)];
+    const std::string active_key = MappingKey(node_mapping);
+    auto [active_it, inserted] = active_iso_hands_by_key_.try_emplace(
+        active_key, std::array<std::vector<int>, 2>{});
+    if (inserted) {
+      active_it->second = BuildActiveIsoHands(node_mapping);
+    }
+    for (int player = 0; player < game::poker::GameBasic::kNumPlayers;
+         ++player) {
+      active_iso_hands_by_node_player_[static_cast<std::size_t>(node.node_id)]
+                                      [static_cast<std::size_t>(player)] =
+          &active_it->second[static_cast<std::size_t>(player)];
+    }
     node_child_caches_[static_cast<std::size_t>(node.node_id)] =
         NodeChildCache{node.children_offset, node.num_children};
     for (int child_index = 0; child_index < node.num_children;
@@ -748,12 +696,10 @@ void PokerCfrSolver::BuildNodeCaches() {
           game::poker::TerminalStatus::kFoldTerminal) {
         fold_terminal_items_.push_back(item);
       } else if (node.node_state->Street() == game::poker::PokerRound::kRiver) {
-        const std::string key = mapping.RawBoard().ToString() + "#" +
-                                std::to_string(mapping.NumIsoHands());
+        const std::string key = MappingKey(mapping);
         river_items_by_key[key].push_back(item);
       } else {
-        const std::string key = mapping.RawBoard().ToString() + "#" +
-                                std::to_string(mapping.NumIsoHands());
+        const std::string key = MappingKey(mapping);
         runout_items_by_key[key].push_back(item);
       }
     }
@@ -793,6 +739,58 @@ void PokerCfrSolver::BuildNodeCaches() {
     }
   }
   std::reverse(reverse_node_ids_.begin(), reverse_node_ids_.end());
+}
+
+std::array<std::vector<int>, 2> PokerCfrSolver::BuildActiveIsoHands(
+    const game::poker::IsomorphicMapping& mapping) const {
+  std::array<std::vector<int>, 2> active_hands;
+  const std::vector<std::vector<float>>& belief = setup_->RootBelief().Belief();
+  if (belief.size() !=
+      static_cast<std::size_t>(game::poker::GameBasic::kNumPlayers)) {
+    throw std::runtime_error("Root belief player count mismatch");
+  }
+
+  for (int player = 0; player < game::poker::GameBasic::kNumPlayers;
+       ++player) {
+    const std::vector<float>& player_belief =
+        belief[static_cast<std::size_t>(player)];
+    if (player_belief.size() !=
+        static_cast<std::size_t>(game::poker::GameBasic::kNumHands)) {
+      throw std::runtime_error("Root belief hand count mismatch");
+    }
+    std::vector<bool> seen(static_cast<std::size_t>(mapping.NumIsoHands()),
+                           false);
+    for (int raw = 0; raw < game::poker::GameBasic::kNumHands; ++raw) {
+      if (player_belief[static_cast<std::size_t>(raw)] <= 0.0f) {
+        continue;
+      }
+      const int iso = mapping.RawToIso(raw);
+      if (iso < 0 || seen[static_cast<std::size_t>(iso)]) {
+        continue;
+      }
+      seen[static_cast<std::size_t>(iso)] = true;
+      active_hands[static_cast<std::size_t>(player)].push_back(iso);
+    }
+    std::sort(active_hands[static_cast<std::size_t>(player)].begin(),
+              active_hands[static_cast<std::size_t>(player)].end());
+  }
+  return active_hands;
+}
+
+const std::vector<int>& PokerCfrSolver::ActiveIsoHands(int node_id,
+                                                       int player) const {
+  ValidatePlayer(player);
+  if (node_id < 0 ||
+      node_id >= static_cast<int>(active_iso_hands_by_node_player_.size())) {
+    throw std::invalid_argument("Active iso hand node id is out of range");
+  }
+  const std::vector<int>* active_hands =
+      active_iso_hands_by_node_player_[static_cast<std::size_t>(node_id)]
+                                      [static_cast<std::size_t>(player)];
+  if (active_hands == nullptr) {
+    throw std::runtime_error("Active iso hand cache is missing");
+  }
+  return *active_hands;
 }
 
 IsoTransition PokerCfrSolver::BuildChanceTransition(int parent_node_id,
@@ -920,15 +918,17 @@ void PokerCfrSolver::PropagateChanceReach(
        ++child_index) {
     const int child_id = child_cache.first_child_id + child_index;
     const IsoTransition& transition = ChanceTransition(child_id);
+    const NodeCfrLayout& child_layout = storage_.Layout(child_id);
     for (int player = 0; player < game::poker::GameBasic::kNumPlayers;
          ++player) {
-      for (int hand = 0; hand < storage_.NumHands(child_id); ++hand) {
-        storage_.ReachAt(child_id, player, hand) = 0.0f;
+      float* child_reach = storage_.ReachBlock(child_id, player);
+      for (int hand = 0; hand < child_layout.num_hands; ++hand) {
+        child_reach[hand] = 0.0f;
       }
+      const float* parent_reach = storage_.ReachBlock(node.node_id, player);
       for (const IsoTransitionEdge& edge : transition.edges) {
-        storage_.ReachAt(child_id, player, edge.child_iso) +=
-            storage_.ReachAt(node.node_id, player, edge.parent_iso) *
-            edge.weight;
+        child_reach[edge.child_iso] += parent_reach[edge.parent_iso] *
+                                       edge.weight;
       }
     }
   }
@@ -981,27 +981,9 @@ void PokerCfrSolver::ComputeTerminalCfvs(int player) {
 }
 
 void PokerCfrSolver::BackwardAndUpdate(int hero_player) {
-  last_backward_profile_ = BackwardPassProfile{};
-  std::atomic<std::uint64_t> chance_ns = 0;
-  std::atomic<std::uint64_t> player_propagate_ns = 0;
-  std::atomic<std::uint64_t> player_regret_ns = 0;
-  std::atomic<int> chance_nodes = 0;
-  std::atomic<int> player_nodes = 0;
-  std::atomic<int> hero_nodes = 0;
-  std::atomic<int> opponent_nodes = 0;
-
   for (auto level_it = node_ids_by_depth_.rbegin();
        level_it != node_ids_by_depth_.rend(); ++level_it) {
     const std::vector<int>& level = *level_it;
-    ++last_backward_profile_.levels;
-    if (level.size() == 1) {
-      ++last_backward_profile_.singleton_levels;
-    }
-    if (level.size() <= 4) {
-      ++last_backward_profile_.small_levels;
-    }
-    last_backward_profile_.max_level_width = std::max(
-        last_backward_profile_.max_level_width, static_cast<int>(level.size()));
     thread_pool_->ParallelFor(level.size(), [&](std::size_t index) {
       const game::poker::PokerTreeNode& node =
           tree_.Node(level[index]);
@@ -1010,51 +992,20 @@ void PokerCfrSolver::BackwardAndUpdate(int hero_player) {
       }
       if (node.node_state->ActorPlayer() ==
           game::poker::NodeState::kChancePlayer) {
-        chance_nodes.fetch_add(1, std::memory_order_relaxed);
-        const auto begin = std::chrono::steady_clock::now();
         BackwardChanceNode(node, hero_player);
-        chance_ns.fetch_add(
-            ElapsedNs(begin, std::chrono::steady_clock::now()),
-            std::memory_order_relaxed);
       } else {
-        player_nodes.fetch_add(1, std::memory_order_relaxed);
-        const BackwardNodeProfile profile =
-            BackwardPlayerNode(node, hero_player);
-        player_propagate_ns.fetch_add(profile.propagate_ns,
-                                      std::memory_order_relaxed);
-        player_regret_ns.fetch_add(profile.regret_ns,
-                                   std::memory_order_relaxed);
-        if (profile.updated_regret) {
-          hero_nodes.fetch_add(1, std::memory_order_relaxed);
-        } else {
-          opponent_nodes.fetch_add(1, std::memory_order_relaxed);
-        }
+        BackwardPlayerNode(node, hero_player);
       }
     });
   }
-
-  last_backward_profile_.chance_ms =
-      static_cast<double>(chance_ns.load(std::memory_order_relaxed)) /
-      1'000'000.0;
-  last_backward_profile_.player_propagate_ms =
-      static_cast<double>(player_propagate_ns.load(std::memory_order_relaxed)) /
-      1'000'000.0;
-  last_backward_profile_.player_regret_ms =
-      static_cast<double>(player_regret_ns.load(std::memory_order_relaxed)) /
-      1'000'000.0;
-  last_backward_profile_.chance_nodes =
-      chance_nodes.load(std::memory_order_relaxed);
-  last_backward_profile_.player_nodes =
-      player_nodes.load(std::memory_order_relaxed);
-  last_backward_profile_.hero_nodes = hero_nodes.load(std::memory_order_relaxed);
-  last_backward_profile_.opponent_nodes =
-      opponent_nodes.load(std::memory_order_relaxed);
 }
 
 void PokerCfrSolver::BackwardChanceNode(
     const game::poker::PokerTreeNode& node, int player) {
-  for (int hand = 0; hand < storage_.NumHands(node.node_id); ++hand) {
-    storage_.CfvAt(node.node_id, player, hand) = 0.0f;
+  const NodeCfrLayout& parent_layout = storage_.Layout(node.node_id);
+  float* parent_cfv = storage_.CfvBlock(node.node_id, player);
+  for (int hand = 0; hand < parent_layout.num_hands; ++hand) {
+    parent_cfv[hand] = 0.0f;
   }
 
   const NodeChildCache& child_cache =
@@ -1063,24 +1014,23 @@ void PokerCfrSolver::BackwardChanceNode(
        ++child_index) {
     const int child_id = child_cache.first_child_id + child_index;
     const IsoTransition& transition = ChanceTransition(child_id);
+    const float* child_cfv = storage_.CfvBlock(child_id, player);
     for (const IsoTransitionEdge& edge : transition.edges) {
-      storage_.CfvAt(node.node_id, player, edge.parent_iso) +=
-          storage_.CfvAt(child_id, player, edge.child_iso) * edge.weight *
+      parent_cfv[edge.parent_iso] +=
+          child_cfv[edge.child_iso] * edge.weight *
           transition.chance_prob;
     }
   }
 }
 
-PokerCfrSolver::BackwardNodeProfile PokerCfrSolver::BackwardPlayerNode(
+void PokerCfrSolver::BackwardPlayerNode(
     const game::poker::PokerTreeNode& node, int hero_player) {
-  BackwardNodeProfile profile;
   const int actor = node.node_state->ActorPlayer();
   const NodeCfrLayout& layout = storage_.Layout(node.node_id);
   const NodeChildCache& child_cache =
       node_child_caches_[static_cast<std::size_t>(node.node_id)];
   const float* strategy = storage_.StrategyBlock(node.node_id);
 
-  const auto propagate_begin = std::chrono::steady_clock::now();
   float* node_cfv = storage_.CfvBlock(node.node_id, hero_player);
   std::fill(node_cfv, node_cfv + layout.num_hands, 0.0f);
 
@@ -1099,27 +1049,30 @@ PokerCfrSolver::BackwardNodeProfile PokerCfrSolver::BackwardPlayerNode(
       }
     }
   }
-  profile.propagate_ns =
-      ElapsedNs(propagate_begin, std::chrono::steady_clock::now());
 
   if (actor != hero_player) {
-    return profile;
+    return;
   }
 
-  profile.updated_regret = true;
-  const auto regret_begin = std::chrono::steady_clock::now();
+  const std::vector<int>& hero_active_hands =
+      ActiveIsoHands(node.node_id, hero_player);
   float* regret = storage_.RegretBlock(node.node_id);
   float* mutable_strategy = storage_.StrategyBlock(node.node_id);
   const float* actor_node_cfv = storage_.CfvBlock(node.node_id, actor);
   thread_local std::vector<float> positive_sum;
-  positive_sum.assign(static_cast<std::size_t>(layout.num_hands), 0.0f);
+  if (positive_sum.size() < static_cast<std::size_t>(layout.num_hands)) {
+    positive_sum.resize(static_cast<std::size_t>(layout.num_hands), 0.0f);
+  }
+  for (int hand : hero_active_hands) {
+    positive_sum[static_cast<std::size_t>(hand)] = 0.0f;
+  }
 
   for (int action = 0; action < layout.num_actions; ++action) {
     const int child_id = child_cache.first_child_id + action;
     const float* child_cfv = storage_.CfvBlock(child_id, actor);
     float* action_regret =
         regret + static_cast<std::size_t>(action * layout.num_hands);
-    for (int hand = 0; hand < layout.num_hands; ++hand) {
+    for (int hand : hero_active_hands) {
       const float updated_regret =
           action_regret[hand] + child_cfv[hand] - actor_node_cfv[hand];
       action_regret[hand] = updated_regret;
@@ -1136,7 +1089,7 @@ PokerCfrSolver::BackwardNodeProfile PokerCfrSolver::BackwardPlayerNode(
     float* action_strategy =
         mutable_strategy +
         static_cast<std::size_t>(action * layout.num_hands);
-    for (int hand = 0; hand < layout.num_hands; ++hand) {
+    for (int hand : hero_active_hands) {
       const float updated_regret = action_regret[hand];
       const float hand_positive_sum =
           positive_sum[static_cast<std::size_t>(hand)];
@@ -1153,8 +1106,6 @@ PokerCfrSolver::BackwardNodeProfile PokerCfrSolver::BackwardPlayerNode(
       }
     }
   }
-  profile.regret_ns = ElapsedNs(regret_begin, std::chrono::steady_clock::now());
-  return profile;
 }
 
 void PokerCfrSolver::ApplyRegretDiscount(int node_id) {
