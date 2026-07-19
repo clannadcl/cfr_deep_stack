@@ -1,6 +1,7 @@
 #pragma once
 
 #include <array>
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <unordered_map>
@@ -109,9 +110,13 @@ class PokerCfrSolver {
     const game::poker::NodeState* node_state = nullptr;
     const game::poker::IsomorphicMapping* mapping = nullptr;
   };
-  using TerminalWorkBatch = std::vector<TerminalWorkItem>;
+  using TerminalBatchItem = game::poker::TerminalCfvCalculator::BatchItem;
+  using TerminalBatchItems = std::vector<TerminalBatchItem>;
 
   void BuildNodeCaches();
+  std::uint64_t EstimateNodeTraversalWork(
+      const game::poker::PokerTreeNode& node) const;
+  bool ShouldParallelizeLevel(std::size_t depth) const;
   std::array<std::vector<int>, 2> BuildActiveIsoHands(
       const game::poker::IsomorphicMapping& mapping) const;
   const std::vector<int>& ActiveIsoHands(int node_id, int player) const;
@@ -148,10 +153,12 @@ class PokerCfrSolver {
   std::vector<const game::poker::IsomorphicMapping*> node_mappings_;
   std::vector<NodeChildCache> node_child_caches_;
   std::vector<std::vector<int>> node_ids_by_depth_;
+  std::vector<std::uint64_t> node_level_work_;
   std::vector<int> terminal_node_ids_;
   std::vector<TerminalWorkItem> fold_terminal_items_;
-  std::vector<TerminalWorkBatch> river_terminal_batches_;
-  std::vector<TerminalWorkBatch> runout_terminal_batches_;
+  std::array<std::vector<TerminalBatchItem>, 2> fold_terminal_batch_items_;
+  std::array<std::vector<TerminalBatchItems>, 2> river_terminal_batch_items_;
+  std::array<std::vector<TerminalBatchItems>, 2> runout_terminal_batch_items_;
   std::vector<int> reverse_node_ids_;
   std::vector<IsoTransition> chance_transitions_by_child_id_;
   std::unordered_map<std::string, std::array<std::vector<int>, 2>>

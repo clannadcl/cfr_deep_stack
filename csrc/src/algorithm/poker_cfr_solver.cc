@@ -2,12 +2,12 @@
 
 #include <algorithm>
 #include <array>
-#include <atomic>
 #include <cmath>
 #include <condition_variable>
 #include <cstddef>
 #include <exception>
 #include <functional>
+#include <iterator>
 #include <mutex>
 #include <stdexcept>
 #include <string>
@@ -24,8 +24,11 @@ namespace fisher::algorithm {
 namespace {
 
 constexpr float kEvMassEpsilon = 1e-10f;
-constexpr std::size_t kTerminalCfvBatchSize = 64;
-constexpr std::size_t kRiverTerminalCfvBatchSize = 4;
+constexpr std::size_t kNodeTraversalGrain = 32;
+constexpr std::size_t kFoldTerminalGrain = 64;
+constexpr std::size_t kRiverTerminalBatchGrain = 32;
+constexpr std::size_t kRunoutTerminalBatchGrain = 32;
+constexpr std::uint64_t kParallelLevelWorkThreshold = 64 * 1024;
 
 struct EvRawHandEntry {
   int iso_index = -1;
@@ -298,10 +301,16 @@ class PokerCfrSolver::ThreadPool {
 
   template <typename Fn>
   void ParallelFor(std::size_t count, Fn fn) {
+    ParallelFor(count, /*grain=*/1, std::move(fn));
+  }
+
+  template <typename Fn>
+  void ParallelFor(std::size_t count, std::size_t grain, Fn fn) {
     if (count == 0) {
       return;
     }
-    if (workers_.empty() || count == 1) {
+    grain = std::max<std::size_t>(1, grain);
+    if (workers_.empty() || count <= grain) {
       for (std::size_t index = 0; index < count; ++index) {
         fn(index);
       }
@@ -315,12 +324,14 @@ class PokerCfrSolver::ThreadPool {
       }
       task_ = std::move(fn);
       count_ = count;
+      grain_ = grain;
       next_index_ = 0;
-      remaining_ = count;
+      remaining_chunks_ = (count + grain - 1) / grain;
       first_exception_ = nullptr;
       has_job_ = true;
     }
     job_available_.notify_all();
+    ProcessChunks();
 
     std::unique_lock<std::mutex> lock(mutex_);
     job_done_.wait(lock, [this] { return !has_job_; });
@@ -330,23 +341,24 @@ class PokerCfrSolver::ThreadPool {
   }
 
  private:
-  void WorkerLoop() {
+  void ProcessChunks() {
     while (true) {
-      std::size_t index = 0;
+      std::size_t begin = 0;
+      std::size_t end = 0;
       {
-        std::unique_lock<std::mutex> lock(mutex_);
-        job_available_.wait(lock, [this] {
-          return stop_ || (has_job_ && next_index_ < count_);
-        });
-        if (stop_) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (!has_job_ || next_index_ >= count_) {
           return;
         }
-        index = next_index_;
-        ++next_index_;
+        begin = next_index_;
+        end = std::min(count_, begin + grain_);
+        next_index_ = end;
       }
 
       try {
-        task_(index);
+        for (std::size_t index = begin; index < end; ++index) {
+          task_(index);
+        }
       } catch (...) {
         std::lock_guard<std::mutex> lock(mutex_);
         if (first_exception_ == nullptr) {
@@ -356,15 +368,29 @@ class PokerCfrSolver::ThreadPool {
 
       {
         std::lock_guard<std::mutex> lock(mutex_);
-        --remaining_;
-        if (remaining_ == 0) {
+        --remaining_chunks_;
+        if (remaining_chunks_ == 0) {
           has_job_ = false;
           task_ = nullptr;
           job_done_.notify_one();
-        } else if (next_index_ < count_) {
-          job_available_.notify_one();
+          return;
         }
       }
+    }
+  }
+
+  void WorkerLoop() {
+    while (true) {
+      {
+        std::unique_lock<std::mutex> lock(mutex_);
+        job_available_.wait(lock, [this] {
+          return stop_ || (has_job_ && next_index_ < count_);
+        });
+        if (stop_) {
+          return;
+        }
+      }
+      ProcessChunks();
     }
   }
 
@@ -375,8 +401,9 @@ class PokerCfrSolver::ThreadPool {
   std::function<void(std::size_t)> task_;
   std::exception_ptr first_exception_ = nullptr;
   std::size_t count_ = 0;
+  std::size_t grain_ = 1;
   std::size_t next_index_ = 0;
-  std::size_t remaining_ = 0;
+  std::size_t remaining_chunks_ = 0;
   bool has_job_ = false;
   bool stop_ = false;
 };
@@ -466,8 +493,9 @@ void PokerCfrSolver::FinalizeAverageStrategy(float average_epsilon) {
   }
 
   InitializeRootReach();
-  for (const std::vector<int>& level : node_ids_by_depth_) {
-    thread_pool_->ParallelFor(level.size(), [&](std::size_t index) {
+  for (std::size_t depth = 0; depth < node_ids_by_depth_.size(); ++depth) {
+    const std::vector<int>& level = node_ids_by_depth_[depth];
+    const auto process_node = [&](std::size_t index) {
       const game::poker::PokerTreeNode& node = tree_.Node(level[index]);
       if (node.node_state->IsTerminal()) {
         return;
@@ -478,7 +506,15 @@ void PokerCfrSolver::FinalizeAverageStrategy(float average_epsilon) {
       } else {
         PropagateAveragePlayerReach(node, average_epsilon);
       }
-    });
+    };
+    if (ShouldParallelizeLevel(depth)) {
+      thread_pool_->ParallelFor(level.size(), kNodeTraversalGrain,
+                                process_node);
+    } else {
+      for (std::size_t index = 0; index < level.size(); ++index) {
+        process_node(index);
+      }
+    }
   }
 
   ComputeTerminalCfvs(0);
@@ -486,8 +522,10 @@ void PokerCfrSolver::FinalizeAverageStrategy(float average_epsilon) {
 
   for (auto level_it = node_ids_by_depth_.rbegin();
        level_it != node_ids_by_depth_.rend(); ++level_it) {
+    const std::size_t depth = static_cast<std::size_t>(
+        std::distance(level_it, node_ids_by_depth_.rend()) - 1);
     const std::vector<int>& level = *level_it;
-    thread_pool_->ParallelFor(level.size(), [&](std::size_t index) {
+    const auto process_node = [&](std::size_t index) {
       const game::poker::PokerTreeNode& node = tree_.Node(level[index]);
       if (node.node_state->IsTerminal()) {
         return;
@@ -499,7 +537,15 @@ void PokerCfrSolver::FinalizeAverageStrategy(float average_epsilon) {
       } else {
         BackwardAveragePlayerNode(node, average_epsilon);
       }
-    });
+    };
+    if (ShouldParallelizeLevel(depth)) {
+      thread_pool_->ParallelFor(level.size(), kNodeTraversalGrain,
+                                process_node);
+    } else {
+      for (std::size_t index = 0; index < level.size(); ++index) {
+        process_node(index);
+      }
+    }
   }
 
   average_finalized_ = true;
@@ -635,17 +681,24 @@ void PokerCfrSolver::BuildNodeCaches() {
   node_child_caches_.assign(static_cast<std::size_t>(tree_.NumNodes()),
                             NodeChildCache{});
   node_ids_by_depth_.clear();
+  node_level_work_.clear();
   terminal_node_ids_.clear();
   fold_terminal_items_.clear();
-  river_terminal_batches_.clear();
-  runout_terminal_batches_.clear();
+  for (int player = 0; player < game::poker::GameBasic::kNumPlayers;
+       ++player) {
+    fold_terminal_batch_items_[static_cast<std::size_t>(player)].clear();
+    river_terminal_batch_items_[static_cast<std::size_t>(player)].clear();
+    runout_terminal_batch_items_[static_cast<std::size_t>(player)].clear();
+  }
   reverse_node_ids_.clear();
   active_iso_hands_by_key_.clear();
   chance_transitions_by_child_id_.assign(
       static_cast<std::size_t>(tree_.NumNodes()), IsoTransition{});
 
-  std::unordered_map<std::string, TerminalWorkBatch> river_items_by_key;
-  std::unordered_map<std::string, TerminalWorkBatch> runout_items_by_key;
+  std::unordered_map<std::string, std::vector<TerminalWorkItem>>
+      river_items_by_key;
+  std::unordered_map<std::string, std::vector<TerminalWorkItem>>
+      runout_items_by_key;
 
   for (const game::poker::PokerTreeNode& node : tree_.Nodes()) {
     if (node.depth < 0) {
@@ -653,6 +706,7 @@ void PokerCfrSolver::BuildNodeCaches() {
     }
     if (node.depth >= static_cast<int>(node_ids_by_depth_.size())) {
       node_ids_by_depth_.resize(static_cast<std::size_t>(node.depth + 1));
+      node_level_work_.resize(static_cast<std::size_t>(node.depth + 1), 0);
     }
     node_ids_by_depth_[static_cast<std::size_t>(node.depth)].push_back(
         node.node_id);
@@ -674,6 +728,8 @@ void PokerCfrSolver::BuildNodeCaches() {
     }
     node_child_caches_[static_cast<std::size_t>(node.node_id)] =
         NodeChildCache{node.children_offset, node.num_children};
+    node_level_work_[static_cast<std::size_t>(node.depth)] +=
+        EstimateNodeTraversalWork(node);
     for (int child_index = 0; child_index < node.num_children;
          ++child_index) {
       const int expected_child_id = node.children_offset + child_index;
@@ -705,27 +761,44 @@ void PokerCfrSolver::BuildNodeCaches() {
     }
   }
 
-  const auto append_batches = [](const auto& items_by_key,
-                                 std::size_t batch_limit,
-                                 std::vector<TerminalWorkBatch>* batches) {
-    for (const auto& entry : items_by_key) {
-      const TerminalWorkBatch& items = entry.second;
-      for (std::size_t offset = 0; offset < items.size();
-           offset += batch_limit) {
-        const std::size_t batch_size =
-            std::min(batch_limit, items.size() - offset);
-        batches->emplace_back(items.begin() +
-                                  static_cast<std::ptrdiff_t>(offset),
-                              items.begin() +
-                                  static_cast<std::ptrdiff_t>(offset +
-                                                              batch_size));
-      }
-    }
+  const auto make_batch_item = [&](const TerminalWorkItem& item, int player) {
+    return TerminalBatchItem{
+        item.node_state,
+        player,
+        item.mapping,
+        storage_.ReachBlock(item.node_id, 1 - player),
+        storage_.CfvBlock(item.node_id, player),
+    };
   };
-  append_batches(river_items_by_key, kRiverTerminalCfvBatchSize,
-                 &river_terminal_batches_);
-  append_batches(runout_items_by_key, kTerminalCfvBatchSize,
-                 &runout_terminal_batches_);
+  const auto append_group_items =
+      [&](const auto& items_by_key, int player,
+          std::vector<TerminalBatchItems>* target_groups) {
+        target_groups->reserve(items_by_key.size());
+        for (const auto& entry : items_by_key) {
+          const std::vector<TerminalWorkItem>& source_items = entry.second;
+          TerminalBatchItems group_items;
+          group_items.reserve(source_items.size());
+          for (const TerminalWorkItem& item : source_items) {
+            group_items.push_back(make_batch_item(item, player));
+          }
+          target_groups->push_back(std::move(group_items));
+        }
+      };
+  for (int player = 0; player < game::poker::GameBasic::kNumPlayers;
+       ++player) {
+    std::vector<TerminalBatchItem>& fold_items =
+        fold_terminal_batch_items_[static_cast<std::size_t>(player)];
+    fold_items.reserve(fold_terminal_items_.size());
+    for (const TerminalWorkItem& item : fold_terminal_items_) {
+      fold_items.push_back(make_batch_item(item, player));
+    }
+    append_group_items(
+        river_items_by_key, player,
+        &river_terminal_batch_items_[static_cast<std::size_t>(player)]);
+    append_group_items(
+        runout_items_by_key, player,
+        &runout_terminal_batch_items_[static_cast<std::size_t>(player)]);
+  }
 
   for (const game::poker::PokerTreeNode& node : tree_.Nodes()) {
     if (node.node_state->ActorPlayer() ==
@@ -739,6 +812,30 @@ void PokerCfrSolver::BuildNodeCaches() {
     }
   }
   std::reverse(reverse_node_ids_.begin(), reverse_node_ids_.end());
+}
+
+std::uint64_t PokerCfrSolver::EstimateNodeTraversalWork(
+    const game::poker::PokerTreeNode& node) const {
+  if (node.node_state->IsTerminal()) {
+    return 0;
+  }
+  if (node.node_state->ActorPlayer() ==
+      game::poker::NodeState::kChancePlayer) {
+    const int num_hands = storage_.NumHands(node.node_id);
+    return static_cast<std::uint64_t>(std::max(1, node.num_children)) *
+           static_cast<std::uint64_t>(std::max(1, num_hands)) *
+           static_cast<std::uint64_t>(game::poker::GameBasic::kNumPlayers);
+  }
+  const NodeCfrLayout& layout = storage_.Layout(node.node_id);
+  return static_cast<std::uint64_t>(std::max(1, layout.num_actions)) *
+         static_cast<std::uint64_t>(std::max(1, layout.num_hands));
+}
+
+bool PokerCfrSolver::ShouldParallelizeLevel(std::size_t depth) const {
+  return num_threads_ > 1 && depth < node_level_work_.size() &&
+         node_level_work_[depth] >= kParallelLevelWorkThreshold &&
+         depth < node_ids_by_depth_.size() &&
+         node_ids_by_depth_[depth].size() > 1;
 }
 
 std::array<std::vector<int>, 2> PokerCfrSolver::BuildActiveIsoHands(
@@ -845,8 +942,9 @@ void PokerCfrSolver::InitializeRootReach() {
 }
 
 void PokerCfrSolver::ForwardReachAndAccumulateAverage(int hero_player) {
-  for (const std::vector<int>& level : node_ids_by_depth_) {
-    thread_pool_->ParallelFor(level.size(), [&](std::size_t index) {
+  for (std::size_t depth = 0; depth < node_ids_by_depth_.size(); ++depth) {
+    const std::vector<int>& level = node_ids_by_depth_[depth];
+    const auto process_node = [&](std::size_t index) {
       const game::poker::PokerTreeNode& node =
           tree_.Node(level[index]);
       if (node.node_state->IsTerminal()) {
@@ -858,7 +956,15 @@ void PokerCfrSolver::ForwardReachAndAccumulateAverage(int hero_player) {
       } else {
         PropagatePlayerReach(node, hero_player);
       }
-    });
+    };
+    if (ShouldParallelizeLevel(depth)) {
+      thread_pool_->ParallelFor(level.size(), kNodeTraversalGrain,
+                                process_node);
+    } else {
+      for (std::size_t index = 0; index < level.size(); ++index) {
+        process_node(index);
+      }
+    }
   }
 }
 
@@ -936,55 +1042,57 @@ void PokerCfrSolver::PropagateChanceReach(
 
 void PokerCfrSolver::ComputeTerminalCfvs(int player) {
   ValidatePlayer(player);
-  const auto build_batch_items = [&](const TerminalWorkBatch& batch) {
-    std::vector<game::poker::TerminalCfvCalculator::BatchItem> items;
-    items.reserve(batch.size());
-    for (const TerminalWorkItem& item : batch) {
-      items.push_back(game::poker::TerminalCfvCalculator::BatchItem{
-          item.node_state,
-          player,
-          item.mapping,
-          storage_.ReachBlock(item.node_id, 1 - player),
-          storage_.CfvBlock(item.node_id, player),
-      });
-    }
-    return items;
-  };
+  const std::size_t player_index = static_cast<std::size_t>(player);
+  const std::vector<TerminalBatchItem>& fold_items =
+      fold_terminal_batch_items_[player_index];
+  const std::vector<TerminalBatchItems>& river_batches =
+      river_terminal_batch_items_[player_index];
+  const std::vector<TerminalBatchItems>& runout_batches =
+      runout_terminal_batch_items_[player_index];
 
-  thread_pool_->ParallelFor(fold_terminal_items_.size(),
+  thread_pool_->ParallelFor(fold_items.size(), kFoldTerminalGrain,
                             [&](std::size_t index) {
-                              const TerminalWorkItem& item =
-                                  fold_terminal_items_[index];
+                              const TerminalBatchItem& item =
+                                  fold_items[index];
                               terminal_cfv_calculator_.CalculateInto(
-                                  *item.node_state, player, *item.mapping,
-                                  storage_.ReachBlock(item.node_id, 1 - player),
-                                  storage_.CfvBlock(item.node_id, player));
+                                  *item.node, player, *item.mapping,
+                                  item.opponent_reach, item.out_cfv);
                             });
 
-  thread_pool_->ParallelFor(river_terminal_batches_.size(),
-                            [&](std::size_t index) {
-                              const TerminalWorkBatch& batch =
-                                  river_terminal_batches_[index];
-                              const auto items = build_batch_items(batch);
-                              terminal_cfv_calculator_
-                                  .CalculateRiverShowdownBatch(items);
-                            });
+  for (const TerminalBatchItems& river_items : river_batches) {
+    const std::size_t num_chunks =
+        (river_items.size() + kRiverTerminalBatchGrain - 1) /
+        kRiverTerminalBatchGrain;
+    thread_pool_->ParallelFor(num_chunks, [&](std::size_t chunk_index) {
+      const std::size_t begin = chunk_index * kRiverTerminalBatchGrain;
+      const std::size_t end =
+          std::min(river_items.size(), begin + kRiverTerminalBatchGrain);
+      terminal_cfv_calculator_.CalculateRiverShowdownBatch(river_items, begin,
+                                                           end);
+    });
+  }
 
-  thread_pool_->ParallelFor(runout_terminal_batches_.size(),
-                            [&](std::size_t index) {
-                              const TerminalWorkBatch& batch =
-                                  runout_terminal_batches_[index];
-                              const auto items = build_batch_items(batch);
-                              terminal_cfv_calculator_
-                                  .CalculateRunoutShowdownBatch(items);
-                            });
+  for (const TerminalBatchItems& runout_items : runout_batches) {
+    const std::size_t num_chunks =
+        (runout_items.size() + kRunoutTerminalBatchGrain - 1) /
+        kRunoutTerminalBatchGrain;
+    thread_pool_->ParallelFor(num_chunks, [&](std::size_t chunk_index) {
+      const std::size_t begin = chunk_index * kRunoutTerminalBatchGrain;
+      const std::size_t end =
+          std::min(runout_items.size(), begin + kRunoutTerminalBatchGrain);
+      terminal_cfv_calculator_.CalculateRunoutShowdownBatch(runout_items,
+                                                            begin, end);
+    });
+  }
 }
 
 void PokerCfrSolver::BackwardAndUpdate(int hero_player) {
   for (auto level_it = node_ids_by_depth_.rbegin();
        level_it != node_ids_by_depth_.rend(); ++level_it) {
+    const std::size_t depth = static_cast<std::size_t>(
+        std::distance(level_it, node_ids_by_depth_.rend()) - 1);
     const std::vector<int>& level = *level_it;
-    thread_pool_->ParallelFor(level.size(), [&](std::size_t index) {
+    const auto process_node = [&](std::size_t index) {
       const game::poker::PokerTreeNode& node =
           tree_.Node(level[index]);
       if (node.node_state->IsTerminal()) {
@@ -996,7 +1104,15 @@ void PokerCfrSolver::BackwardAndUpdate(int hero_player) {
       } else {
         BackwardPlayerNode(node, hero_player);
       }
-    });
+    };
+    if (ShouldParallelizeLevel(depth)) {
+      thread_pool_->ParallelFor(level.size(), kNodeTraversalGrain,
+                                process_node);
+    } else {
+      for (std::size_t index = 0; index < level.size(); ++index) {
+        process_node(index);
+      }
+    }
   }
 }
 

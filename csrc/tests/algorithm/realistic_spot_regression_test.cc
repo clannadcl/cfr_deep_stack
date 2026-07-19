@@ -542,67 +542,74 @@ int main() {
   Expect(river_setup->Pot() == river_fixture.common_pot,
          "river pot mismatch");
 
-  const auto river_solver_begin = std::chrono::steady_clock::now();
-  PokerCfrSolver river_solver{PokerCfrSolver::Args(
-      river_setup, /*num_threads=*/10, /*max_iterations=*/500,
-      /*exploitability_check_interval=*/50,
-      /*target_exploitability=*/-1.0f)};
-  const auto river_solver_end = std::chrono::steady_clock::now();
   const float river_target = river_setup->Pot() * 0.001f;
 
-  std::cout << "river_fixture=" << river_fixture.name
-            << " load_ms="
-            << MillisecondsSince(river_load_begin, river_load_end)
-            << " setup_ms="
-            << MillisecondsSince(river_setup_begin, river_setup_end)
-            << " solver_construct_ms="
-            << MillisecondsSince(river_solver_begin, river_solver_end)
-            << " threads=" << river_solver.NumThreads()
-            << " full_iso_hands=" << river_full_mapping.NumIsoHands()
-            << " root_iso_hands=" << river_root_mapping.NumIsoHands()
-            << " nodes=" << river_solver.Tree().NumNodes()
-            << " terminal_nodes=" << river_solver.TerminalNodeIds().size()
-            << " target_exploitability=" << river_target << '\n';
+  const auto run_river_solver = [&](int num_threads) {
+    const auto river_solver_begin = std::chrono::steady_clock::now();
+    PokerCfrSolver river_solver{PokerCfrSolver::Args(
+        river_setup, num_threads, /*max_iterations=*/500,
+        /*exploitability_check_interval=*/50,
+        /*target_exploitability=*/-1.0f)};
+    const auto river_solver_end = std::chrono::steady_clock::now();
 
-  int reached_iteration = -1;
-  float last_exploitability = 0.0f;
-  const auto river_solve_begin = std::chrono::steady_clock::now();
-  for (int iteration = 1; iteration <= 500; ++iteration) {
-    river_solver.RunIteration();
-    if (iteration % 50 != 0) {
-      continue;
+    std::cout << "river_fixture=" << river_fixture.name
+              << " load_ms="
+              << MillisecondsSince(river_load_begin, river_load_end)
+              << " setup_ms="
+              << MillisecondsSince(river_setup_begin, river_setup_end)
+              << " solver_construct_ms="
+              << MillisecondsSince(river_solver_begin, river_solver_end)
+              << " threads=" << river_solver.NumThreads()
+              << " full_iso_hands=" << river_full_mapping.NumIsoHands()
+              << " root_iso_hands=" << river_root_mapping.NumIsoHands()
+              << " nodes=" << river_solver.Tree().NumNodes()
+              << " terminal_nodes=" << river_solver.TerminalNodeIds().size()
+              << " target_exploitability=" << river_target << '\n';
+
+    int reached_iteration = -1;
+    float last_exploitability = 0.0f;
+    const auto river_solve_begin = std::chrono::steady_clock::now();
+    for (int iteration = 1; iteration <= 500; ++iteration) {
+      river_solver.RunIteration();
+      if (iteration % 50 != 0) {
+        continue;
+      }
+      const auto check_begin = std::chrono::steady_clock::now();
+      const fisher::algorithm::ExploitabilityResult result =
+          fisher::algorithm::BestResponseCalculator(&river_solver).Compute();
+      const auto check_end = std::chrono::steady_clock::now();
+      last_exploitability = result.exploitability;
+      std::cout << "river_iteration=" << iteration
+                << " threads=" << river_solver.NumThreads()
+                << " exploitability=" << result.exploitability
+                << " target=" << river_target
+                << " current_ev_p0=" << result.current_ev[0]
+                << " current_ev_p1=" << result.current_ev[1]
+                << " br_ev_p0=" << result.best_response_ev[0]
+                << " br_ev_p1=" << result.best_response_ev[1]
+                << " check_ms=" << MillisecondsSince(check_begin, check_end)
+                << '\n';
+      Expect(std::isfinite(result.exploitability),
+             "river exploitability should be finite");
+      if (result.exploitability <= river_target) {
+        reached_iteration = iteration;
+        break;
+      }
     }
-    const auto check_begin = std::chrono::steady_clock::now();
-    const fisher::algorithm::ExploitabilityResult result =
-        fisher::algorithm::BestResponseCalculator(&river_solver).Compute();
-    const auto check_end = std::chrono::steady_clock::now();
-    last_exploitability = result.exploitability;
-    std::cout << "river_iteration=" << iteration
-              << " exploitability=" << result.exploitability
+    const auto river_solve_end = std::chrono::steady_clock::now();
+    std::cout << "river_solve_done"
+              << " threads=" << river_solver.NumThreads()
+              << " reached_iteration=" << reached_iteration
+              << " last_exploitability=" << last_exploitability
               << " target=" << river_target
-              << " current_ev_p0=" << result.current_ev[0]
-              << " current_ev_p1=" << result.current_ev[1]
-              << " br_ev_p0=" << result.best_response_ev[0]
-              << " br_ev_p1=" << result.best_response_ev[1]
-              << " check_ms=" << MillisecondsSince(check_begin, check_end)
+              << " total_ms="
+              << MillisecondsSince(river_solve_begin, river_solve_end)
               << '\n';
-    Expect(std::isfinite(result.exploitability),
-           "river exploitability should be finite");
-    if (result.exploitability <= river_target) {
-      reached_iteration = iteration;
-      break;
-    }
-  }
-  const auto river_solve_end = std::chrono::steady_clock::now();
-  std::cout << "river_solve_done"
-            << " reached_iteration=" << reached_iteration
-            << " last_exploitability=" << last_exploitability
-            << " target=" << river_target
-            << " total_ms="
-            << MillisecondsSince(river_solve_begin, river_solve_end)
-            << '\n';
-  Expect(last_exploitability >= -1e-4f,
-         "river exploitability should be non-negative");
+    Expect(last_exploitability >= -1e-4f,
+           "river exploitability should be non-negative");
+  };
+  run_river_solver(/*num_threads=*/1);
+  run_river_solver(/*num_threads=*/10);
 
   return 0;
 }
