@@ -165,7 +165,8 @@ std::vector<std::pair<std::size_t, std::size_t>> BuildStrengthGroups(
 
 void BuildStatsForRangeInto(const std::vector<StrengthItem>& items,
                             std::size_t begin, std::size_t end,
-                            const float* opponent_reach, ReachStats* stats) {
+                            const float* opponent_reach,
+                            ReachStats* stats) {
   stats->Reset();
   for (std::size_t index = begin; index < end; ++index) {
     const RawHandEntry& hand = items[index].hand;
@@ -458,7 +459,8 @@ void TerminalCfvCalculator::CalculateRiverShowdownScanBatch(
   const int num_iso_hands = mapping.NumIsoHands();
   for (const BatchItem& item : items) {
     CalculateRiverShowdownWithCache(*item.node, item.player, num_iso_hands,
-                                    cache, item.opponent_reach, item.out_cfv);
+                                    cache, item.opponent_reach,
+                                    item.out_cfv);
   }
   if (profiling) {
     AddProfile(profile);
@@ -482,8 +484,8 @@ void TerminalCfvCalculator::CalculateFold(
                                  ? payoff.lose
                                  : payoff.win;
   for (int iso = 0; iso < mapping.NumIsoHands(); ++iso) {
-    out_cfv[iso] =
-        static_cast<float>(fold_payoff * valid_mass[static_cast<std::size_t>(iso)]);
+    out_cfv[iso] = static_cast<float>(
+        fold_payoff * valid_mass[static_cast<std::size_t>(iso)]);
   }
   if (profiling) {
     Profile profile;

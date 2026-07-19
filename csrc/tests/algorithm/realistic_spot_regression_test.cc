@@ -561,6 +561,9 @@ int main() {
 
   IsomorphicMappingTable table(setup->BasicGame(), setup->RootBelief());
   const auto& mapping = table.Get(setup->Board());
+  const fisher::game::poker::IsomorphicMapping full_mapping(
+      setup->BasicGame(), setup->Board(),
+      std::vector<bool>(GameBasic::kNumHands, true));
   Expect(mapping.NumIsoHands() > 0, "turn mapping should be non-empty");
   Expect(mapping.RawToIso(bb_pair_index) >= 0,
          "known unblocked hand should map to an iso hand");
@@ -578,6 +581,8 @@ int main() {
             << " solver_construct_ms="
             << MillisecondsSince(solver_begin, solver_end)
             << " threads=" << solver.NumThreads()
+            << " full_iso_hands=" << full_mapping.NumIsoHands()
+            << " root_iso_hands=" << mapping.NumIsoHands()
             << " nodes=" << solver.Tree().NumNodes()
             << " terminal_nodes=" << solver.TerminalNodeIds().size() << '\n';
 
@@ -617,6 +622,13 @@ int main() {
       /*bet_rounding=*/river_fixture.min_bet_increment,
       /*min_raise_size=*/river_fixture.min_bet_increment));
   const auto river_setup_end = std::chrono::steady_clock::now();
+  IsomorphicMappingTable river_mapping_table(river_setup->BasicGame(),
+                                             river_setup->RootBelief());
+  const auto& river_root_mapping =
+      river_mapping_table.Get(river_setup->Board());
+  const fisher::game::poker::IsomorphicMapping river_full_mapping(
+      river_setup->BasicGame(), river_setup->Board(),
+      std::vector<bool>(GameBasic::kNumHands, true));
 
   Expect(river_fixture.name == "river_co_vs_bb_kd8d4d4s4c_srp_xbc_xbc",
          "river fixture name mismatch");
@@ -642,6 +654,8 @@ int main() {
             << " solver_construct_ms="
             << MillisecondsSince(river_solver_begin, river_solver_end)
             << " threads=" << river_solver.NumThreads()
+            << " full_iso_hands=" << river_full_mapping.NumIsoHands()
+            << " root_iso_hands=" << river_root_mapping.NumIsoHands()
             << " nodes=" << river_solver.Tree().NumNodes()
             << " terminal_nodes=" << river_solver.TerminalNodeIds().size()
             << " target_exploitability=" << river_target << '\n';

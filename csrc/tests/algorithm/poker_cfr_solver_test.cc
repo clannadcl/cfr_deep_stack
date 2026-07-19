@@ -64,16 +64,33 @@ std::vector<std::vector<float>> MatrixBelief(float value) {
       std::vector<float>(fisher::game::poker::GameBasic::kNumHands, value));
 }
 
-std::vector<std::vector<float>> HeadsUpBelief(const char* player0_hand,
-                                              const char* player1_hand) {
+std::vector<std::vector<float>> BucketClosedHeadsUpBelief(
+    const fisher::game::poker::PokerCards& board, const char* player0_hand,
+    const char* player1_hand) {
   fisher::game::poker::GameBasic game;
+  fisher::game::poker::IsomorphicMapping mapping(
+      game, board,
+      std::vector<bool>(fisher::game::poker::GameBasic::kNumHands, true));
+  const int player0_iso = mapping.RawToIso(game.HandIndex(
+      fisher::game::poker::PokerHand(player0_hand)));
+  const int player1_iso = mapping.RawToIso(game.HandIndex(
+      fisher::game::poker::PokerHand(player1_hand)));
+  if (player0_iso < 0 || player1_iso < 0) {
+    throw std::runtime_error("bucket-closed test hand collides with board");
+  }
+
   std::vector<std::vector<float>> belief(
       fisher::game::poker::GameBasic::kNumPlayers,
       std::vector<float>(fisher::game::poker::GameBasic::kNumHands, 0.0f));
-  belief[0][static_cast<std::size_t>(
-      game.HandIndex(fisher::game::poker::PokerHand(player0_hand)))] = 1.0f;
-  belief[1][static_cast<std::size_t>(
-      game.HandIndex(fisher::game::poker::PokerHand(player1_hand)))] = 1.0f;
+  for (int raw = 0; raw < fisher::game::poker::GameBasic::kNumHands; ++raw) {
+    const int iso = mapping.RawToIso(raw);
+    if (iso == player0_iso) {
+      belief[0][static_cast<std::size_t>(raw)] = 1.0f;
+    }
+    if (iso == player1_iso) {
+      belief[1][static_cast<std::size_t>(raw)] = 1.0f;
+    }
+  }
   return belief;
 }
 
@@ -494,7 +511,8 @@ int main() {
         MakeSetup(PokerCards("AhKhQh2c3d"), 10.0f, {10.0f, 10.0f},
                   {0.0f, 0.0f}, {0.0f, 0.0f}, /*current_player=*/0,
                   /*last_aggressor=*/0, /*raise_count=*/0,
-                  HeadsUpBelief("7c8d", "JhTh"));
+                  BucketClosedHeadsUpBelief(PokerCards("AhKhQh2c3d"),
+                                            "7c8d", "JhTh"));
     PokerCfrSolver air_vs_nuts_solver{
         PokerCfrSolver::Args(air_vs_nuts_setup)};
     RunIterations(&air_vs_nuts_solver, 200);
@@ -570,7 +588,8 @@ int main() {
         MakeSetup(PokerCards("AhKhQh2c"), 10.0f, {10.0f, 10.0f},
                   {0.0f, 0.0f}, {0.0f, 0.0f}, /*current_player=*/0,
                   /*last_aggressor=*/0, /*raise_count=*/0,
-                  HeadsUpBelief("7c8d", "JhTh"));
+                  BucketClosedHeadsUpBelief(PokerCards("AhKhQh2c"), "7c8d",
+                                            "JhTh"));
     PokerCfrSolver turn_solver{PokerCfrSolver::Args(turn_setup)};
     RunIterations(&turn_solver, 200);
 

@@ -76,11 +76,27 @@ fisher::game::poker::NodeState MakeTerminalNode(
 
 std::vector<bool> PossibleHands(
     const fisher::game::poker::GameBasic& game_basic,
+    const fisher::game::poker::PokerCards& board,
     const std::vector<std::string>& hands) {
+  const fisher::game::poker::IsomorphicMapping full_mapping(
+      game_basic, board,
+      std::vector<bool>(fisher::game::poker::GameBasic::kNumHands, true));
   std::vector<bool> possible(fisher::game::poker::GameBasic::kNumHands, false);
+  std::vector<bool> possible_iso(
+      static_cast<std::size_t>(full_mapping.NumIsoHands()), false);
   for (const std::string& hand : hands) {
-    possible[static_cast<std::size_t>(
-        game_basic.HandIndex(fisher::game::poker::PokerHand(hand)))] = true;
+    const int iso = full_mapping.RawToIso(
+        game_basic.HandIndex(fisher::game::poker::PokerHand(hand)));
+    if (iso < 0) {
+      throw std::runtime_error("possible hand collides with board");
+    }
+    possible_iso[static_cast<std::size_t>(iso)] = true;
+  }
+  for (int raw = 0; raw < fisher::game::poker::GameBasic::kNumHands; ++raw) {
+    const int iso = full_mapping.RawToIso(raw);
+    if (iso >= 0 && possible_iso[static_cast<std::size_t>(iso)]) {
+      possible[static_cast<std::size_t>(raw)] = true;
+    }
   }
   return possible;
 }
@@ -134,7 +150,7 @@ int main() {
         MakeTerminalNode(setup, TerminalStatus::kFoldTerminal, {false, true});
     IsomorphicMapping mapping(
         game_basic, board,
-        PossibleHands(game_basic, {"AcAh", "2c2d", "3c3d"}));
+        PossibleHands(game_basic, board, {"AcAh", "2c2d", "3c3d"}));
     const std::vector<float> opponent_reach =
         ReachFor(game_basic, mapping, "2c2d", 1.0f);
 
@@ -162,7 +178,7 @@ int main() {
         MakeTerminalNode(setup, TerminalStatus::kFoldTerminal, {false, true});
     IsomorphicMapping mapping(
         game_basic, board,
-        PossibleHands(game_basic, {"AcAh", "AcKd", "QcQd"}));
+        PossibleHands(game_basic, board, {"AcAh", "AcKd", "QcQd"}));
     std::vector<float> opponent_reach(
         static_cast<std::size_t>(mapping.NumIsoHands()), 0.0f);
     AddReachFor(game_basic, mapping, "AcKd", 7.0f, &opponent_reach);
@@ -184,7 +200,7 @@ int main() {
     const std::vector<std::string> hands = {
         "KdKh", "KsKc", "TdTh", "9c9d", "8s8h", "3c3d"};
     IsomorphicMapping mapping(game_basic, board,
-                              PossibleHands(game_basic, hands));
+                              PossibleHands(game_basic, board, hands));
     std::vector<float> opponent_reach(
         static_cast<std::size_t>(mapping.NumIsoHands()), 0.0f);
     AddReachFor(game_basic, mapping, "KdKh", 0.421f, &opponent_reach);
@@ -231,7 +247,7 @@ int main() {
     const std::vector<std::string> hands = {
         "KdKh", "KsKc", "TdTh", "9c9d", "8s8h", "3c3d"};
     IsomorphicMapping mapping(game_basic, board,
-                              PossibleHands(game_basic, hands));
+                              PossibleHands(game_basic, board, hands));
     std::vector<float> opponent_reach(
         static_cast<std::size_t>(mapping.NumIsoHands()), 0.0f);
     AddReachFor(game_basic, mapping, "KdKh", 0.669f, &opponent_reach);
@@ -278,7 +294,7 @@ int main() {
     const std::vector<std::string> hands = {
         "KdKh", "KsKc", "TdTh", "9c9d", "8s8h", "3c3d"};
     IsomorphicMapping mapping(game_basic, board,
-                              PossibleHands(game_basic, hands));
+                              PossibleHands(game_basic, board, hands));
     std::vector<float> opponent_reach(
         static_cast<std::size_t>(mapping.NumIsoHands()), 0.0f);
     for (const std::string& hand : hands) {
@@ -321,7 +337,7 @@ int main() {
         setup, TerminalStatus::kShowdownTerminal, {false, false});
     IsomorphicMapping mapping(
         game_basic, board,
-        PossibleHands(game_basic, {"2c2d", "3c3d", "4c4d"}));
+        PossibleHands(game_basic, board, {"2c2d", "3c3d", "4c4d"}));
     const std::vector<float> opponent_reach =
         ReachFor(game_basic, mapping, "3c3d", 2.0f);
 
@@ -344,7 +360,7 @@ int main() {
         setup, TerminalStatus::kShowdownTerminal, {false, false});
     IsomorphicMapping mapping(
         raked_game, board,
-        PossibleHands(raked_game, {"2c2d", "3c3d", "4c4d"}));
+        PossibleHands(raked_game, board, {"2c2d", "3c3d", "4c4d"}));
     const std::vector<float> opponent_reach =
         ReachFor(raked_game, mapping, "3c3d", 2.0f);
 
@@ -371,7 +387,7 @@ int main() {
         setup, TerminalStatus::kShowdownTerminal, {false, false});
     IsomorphicMapping mapping(
         raked_game, board,
-        PossibleHands(raked_game, {"KcKd", "QcQd"}));
+        PossibleHands(raked_game, board, {"KcKd", "QcQd"}));
     const std::vector<float> opponent_reach =
         ReachFor(raked_game, mapping, "QcQd", 1.0f);
 
@@ -391,7 +407,7 @@ int main() {
         setup, TerminalStatus::kShowdownTerminal, {false, false});
     IsomorphicMapping mapping(
         game_basic, board,
-        PossibleHands(game_basic, {"KcKd", "QcQd"}));
+        PossibleHands(game_basic, board, {"KcKd", "QcQd"}));
     const std::vector<float> opponent_reach =
         ReachFor(game_basic, mapping, "QcQd", 1.0f);
 
@@ -413,7 +429,7 @@ int main() {
         setup, TerminalStatus::kShowdownTerminal, {false, false});
     IsomorphicMapping mapping(
         game_basic, board,
-        PossibleHands(game_basic, {"KcKd", "QcQd"}));
+        PossibleHands(game_basic, board, {"KcKd", "QcQd"}));
     const std::vector<float> opponent_reach =
         ReachFor(game_basic, mapping, "QcQd", 1.0f);
 
@@ -435,7 +451,7 @@ int main() {
         setup, TerminalStatus::kShowdownTerminal, {false, false});
     IsomorphicMapping mapping(
         game_basic, board,
-        PossibleHands(game_basic, {"KcKd", "QcQd"}));
+        PossibleHands(game_basic, board, {"KcKd", "QcQd"}));
     const std::vector<float> opponent_reach =
         ReachFor(game_basic, mapping, "QcQd", 1.0f);
 
@@ -458,7 +474,7 @@ int main() {
     const std::vector<std::string> hands = {
         "KdKh", "KsKc", "TdTh", "9c9d", "8s8h", "3c3d"};
     IsomorphicMapping mapping(game_basic, board,
-                              PossibleHands(game_basic, hands));
+                              PossibleHands(game_basic, board, hands));
     std::vector<float> reach_a(
         static_cast<std::size_t>(mapping.NumIsoHands()), 0.0f);
     std::vector<float> reach_b(
@@ -508,7 +524,7 @@ int main() {
     const std::vector<std::string> hands = {
         "KdKh", "KsKc", "TdTh", "9c9d", "8s8h", "3c3d"};
     IsomorphicMapping mapping(game_basic, board,
-                              PossibleHands(game_basic, hands));
+                              PossibleHands(game_basic, board, hands));
     std::vector<float> reach_a(
         static_cast<std::size_t>(mapping.NumIsoHands()), 0.0f);
     std::vector<float> reach_b(

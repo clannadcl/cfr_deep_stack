@@ -98,23 +98,40 @@ int main() {
   Expect(mapping.RawToIso(clubs_hand) == mapping.RawToIso(diamonds_hand),
          "isomorphic hands should share iso index");
 
-  std::vector<std::vector<float>> masked = FullBelief();
   const int both_zero = game.HandIndex(PokerHand("AcKd"));
-  const int one_zero = game.HandIndex(PokerHand("AhKh"));
-  masked[0][static_cast<std::size_t>(both_zero)] = 0.0f;
-  masked[1][static_cast<std::size_t>(both_zero)] = 0.0f;
-  masked[0][static_cast<std::size_t>(one_zero)] = 0.0f;
+  std::vector<bool> partial_root_possible(
+      static_cast<std::size_t>(GameBasic::kNumHands), true);
+  partial_root_possible[static_cast<std::size_t>(both_zero)] = false;
+  ExpectInvalidArgument(
+      [&] { IsomorphicMapping(game, board, partial_root_possible); },
+      "partial iso bucket root mask should be invalid");
+
+  const int disabled_iso = mapping.RawToIso(both_zero);
+  Expect(disabled_iso >= 0, "disabled test hand should be valid first");
+  std::vector<std::vector<float>> masked = FullBelief();
+  std::vector<int> disabled_raw_hands;
+  for (int raw = 0; raw < GameBasic::kNumHands; ++raw) {
+    if (mapping.RawToIso(raw) != disabled_iso) {
+      continue;
+    }
+    disabled_raw_hands.push_back(raw);
+    masked[0][static_cast<std::size_t>(raw)] = 0.0f;
+    masked[1][static_cast<std::size_t>(raw)] = 0.0f;
+  }
+  Expect(!disabled_raw_hands.empty(), "should disable one full iso bucket");
   PokerBelief masked_belief(masked);
   IsomorphicMappingTable table(game, masked_belief);
   Expect(!table.Contains(board), "table should start empty");
   const IsomorphicMapping& masked_mapping = table.Get(board);
   Expect(table.Contains(board), "table should contain built board");
   Expect(&masked_mapping == &table.Get(board), "table should cache mapping");
-  Expect(masked_mapping.RawToIso(both_zero) ==
-             IsomorphicMapping::kInvalidIsoIndex,
-         "both-player-zero hand should be invalid");
-  Expect(masked_mapping.RawToIso(one_zero) >= 0,
-         "single-player-zero hand should remain valid");
+  Expect(masked_mapping.NumIsoHands() == mapping.NumIsoHands() - 1,
+         "closed bucket removal should reduce iso hand count by one");
+  for (int raw : disabled_raw_hands) {
+    Expect(masked_mapping.RawToIso(raw) ==
+               IsomorphicMapping::kInvalidIsoIndex,
+           "closed bucket raw hand should be invalid");
+  }
 
   const IsomorphicMapping& turn_mapping = table.Get(PokerCards("2s3s4s5c"));
   Expect(&turn_mapping != &masked_mapping,

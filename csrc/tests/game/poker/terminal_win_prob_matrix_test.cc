@@ -39,12 +39,27 @@ void ExpectInvalidArgument(Fn fn, const char* message) {
 
 std::vector<bool> PossibleHands(
     const fisher::game::poker::GameBasic& game_basic,
+    const fisher::game::poker::PokerCards& board,
     const std::vector<std::string>& hands) {
+  const fisher::game::poker::IsomorphicMapping full_mapping(
+      game_basic, board,
+      std::vector<bool>(fisher::game::poker::GameBasic::kNumHands, true));
   std::vector<bool> possible(fisher::game::poker::GameBasic::kNumHands, false);
+  std::vector<bool> possible_iso(
+      static_cast<std::size_t>(full_mapping.NumIsoHands()), false);
   for (const std::string& hand_string : hands) {
-    possible[static_cast<std::size_t>(
-        game_basic.HandIndex(fisher::game::poker::PokerHand(hand_string)))] =
-        true;
+    const int iso = full_mapping.RawToIso(
+        game_basic.HandIndex(fisher::game::poker::PokerHand(hand_string)));
+    if (iso < 0) {
+      throw std::runtime_error("possible hand collides with board");
+    }
+    possible_iso[static_cast<std::size_t>(iso)] = true;
+  }
+  for (int raw = 0; raw < fisher::game::poker::GameBasic::kNumHands; ++raw) {
+    const int iso = full_mapping.RawToIso(raw);
+    if (iso >= 0 && possible_iso[static_cast<std::size_t>(iso)]) {
+      possible[static_cast<std::size_t>(raw)] = true;
+    }
   }
   return possible;
 }
@@ -216,7 +231,7 @@ void ExpectMatchesReferenceFullBlock(
     const fisher::game::poker::SevenCardLookupTable& evaluator,
     const char* message) {
   const fisher::game::poker::IsomorphicMapping mapping(
-      game_basic, board, PossibleHands(game_basic, possible_hands));
+      game_basic, board, PossibleHands(game_basic, board, possible_hands));
   const fisher::game::poker::TerminalWinProbMatrix matrix(game_basic, board,
                                                           mapping, evaluator);
   const std::vector<float> reference =
@@ -252,7 +267,7 @@ int main() {
     const PokerCards board("AcAdAhAs");
     IsomorphicMapping mapping(
         game_basic, board,
-        PossibleHands(game_basic, {"KcKd", "QcQd", "KhQh"}));
+        PossibleHands(game_basic, board, {"KcKd", "QcQd", "KhQh"}));
     TerminalWinProbMatrix matrix(game_basic, board, mapping, evaluator);
 
     const int kings = IsoIndex(game_basic, mapping, "KcKd");
@@ -284,7 +299,7 @@ int main() {
     const PokerCards board("AcAdAhAs");
     IsomorphicMapping mapping(
         game_basic, board,
-        PossibleHands(game_basic, {"KcKd", "KhKs", "QcQd"}));
+        PossibleHands(game_basic, board, {"KcKd", "KhKs", "QcQd"}));
     TerminalWinProbMatrix matrix(game_basic, board, mapping, evaluator);
 
     const int kings_one = IsoIndex(game_basic, mapping, "KcKd");
@@ -302,7 +317,7 @@ int main() {
     const PokerCards board("AcAdAh");
     IsomorphicMapping mapping(
         game_basic, board,
-        PossibleHands(game_basic, {"KcKd", "QcQd"}));
+        PossibleHands(game_basic, board, {"KcKd", "QcQd"}));
     TerminalWinProbMatrix matrix(game_basic, board, mapping, evaluator);
 
     const int kings = IsoIndex(game_basic, mapping, "KcKd");
@@ -333,7 +348,7 @@ int main() {
     const PokerCards river("AcAdAhAs2c");
     IsomorphicMapping mapping(
         game_basic, river,
-        PossibleHands(game_basic, {"KcKd", "QcQd", "KhQh"}));
+        PossibleHands(game_basic, river, {"KcKd", "QcQd", "KhQh"}));
     TerminalWinProbMatrix matrix(game_basic, river, mapping, evaluator);
 
     const int kings = IsoIndex(game_basic, mapping, "KcKd");

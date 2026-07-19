@@ -123,11 +123,10 @@ IsomorphicMapping::IsomorphicMapping(
   std::vector<bool> raw_is_valid(GameBasic::kNumHands, false);
   std::vector<hand_index_t> sparse_indices;
   sparse_indices.reserve(static_cast<std::size_t>(GameBasic::kNumHands));
+  std::unordered_map<hand_index_t, int> total_count_by_sparse_iso;
+  std::unordered_map<hand_index_t, int> active_count_by_sparse_iso;
 
   for (int raw_index = 0; raw_index < GameBasic::kNumHands; ++raw_index) {
-    if (!root_possible_hands[static_cast<std::size_t>(raw_index)]) {
-      continue;
-    }
     const PokerHand& hand = game_basic.HandFromIndex(raw_index);
     if (hand.HasCollision(board)) {
       continue;
@@ -135,9 +134,24 @@ IsomorphicMapping::IsomorphicMapping(
 
     const hand_index_t sparse_iso =
         game_basic.HoleBoardIsomorphicIndex(hand, board);
+    ++total_count_by_sparse_iso[sparse_iso];
+    if (!root_possible_hands[static_cast<std::size_t>(raw_index)]) {
+      continue;
+    }
+    ++active_count_by_sparse_iso[sparse_iso];
     raw_to_sparse_iso[static_cast<std::size_t>(raw_index)] = sparse_iso;
     raw_is_valid[static_cast<std::size_t>(raw_index)] = true;
     sparse_indices.push_back(sparse_iso);
+  }
+
+  for (const auto& [sparse_iso, total_count] : total_count_by_sparse_iso) {
+    const auto active_it = active_count_by_sparse_iso.find(sparse_iso);
+    const int active_count =
+        active_it == active_count_by_sparse_iso.end() ? 0 : active_it->second;
+    if (active_count > 0 && active_count != total_count) {
+      throw std::invalid_argument(
+          "Root possible hands must be closed over isomorphic hand buckets");
+    }
   }
 
   std::sort(sparse_indices.begin(), sparse_indices.end());
