@@ -3,7 +3,7 @@
 `fisher` is a C++ poker solver workbench.  The current codebase contains a
 Kuhn CFR pybind benchmark and the early Hold'em subgame solver stack:
 cards/ranges, public tree construction, isomorphic hand-space mapping, terminal
-CFV calculation, and a first vanilla CFR traversal.
+CFV calculation, and a first DCFR/CFR traversal.
 
 The long-term direction is a CFR-average + DeepStack-style postflop solver.  The
 current implementation is deliberately modular: Python stays as a thin
@@ -52,11 +52,13 @@ The Hold'em solver is split into small layers:
   flop/turn all-in uses `TerminalWinProbMatrix`.
 - `CfrStorage`: flat storage for strategy, regret, CFV, reach, and accumulated
   average-strategy sums.
-- `PokerCfrSolver`: first vanilla CFR traversal over a `PokerTree`.
+- `PokerCfrSolver`: CFR/DCFR traversal over a `PokerTree`.
 
 ## CFR Traversal
 
-The first poker CFR implementation is vanilla CFR with a two-player sweep:
+The poker CFR implementation runs a two-player sweep.  DCFR is enabled by
+default, with configurable positive regret, negative regret, and average
+strategy discount exponents.
 
 1. `RunIteration()` runs `RunHeroPass(0)` and then `RunHeroPass(1)`.
 2. Each pass initializes root reach from unnormalized root belief.
@@ -68,7 +70,7 @@ The first poker CFR implementation is vanilla CFR with a two-player sweep:
 4. Average strategy is accumulated only for the current hero at hero-owned
    player nodes:
    `sum_strategy[action, hand] += reach[hero, hand] * strategy[action, hand]`.
-5. Terminal node CFVs are calculated for both players.
+5. Terminal node CFVs are calculated for the current hero pass.
 6. CFV is propagated backward in reverse node order:
    - Actor CFV is strategy-weighted over child actions.
    - Non-actor CFV is a plain sum over child CFVs because actor reach was
@@ -76,7 +78,9 @@ The first poker CFR implementation is vanilla CFR with a two-player sweep:
    - Chance CFV uses the sparse transition in reverse and multiplies
      `chance_prob = 1 / (52 - board_size - 4)`.
 7. Only the current hero's actor nodes update regret and immediately refresh
-   strategy by regret matching.
+   strategy by regret matching.  With DCFR enabled, the refreshed strategy is
+   generated from the post-immediate-regret, pre-discount positive regrets; the
+   cumulative regrets are discounted afterward.
 
 Average strategy export applies epsilon smoothing only at read time:
 
@@ -119,7 +123,42 @@ values = policy_value(game_config, strategy)
 exploitability = nash_exploitability(game_config, strategy)
 ```
 
-The Hold'em CFR stack is currently C++-only and tested through C++ unit tests.
+The Hold'em CFR stack exposes a small Python session API for solving a spot and
+inspecting solver output.  Visualization scripts are intentionally kept local;
+generated plots under `build/strategy_plots/` are ignored by git.
+
+```python
+import json
+
+from fisher import solve_poker
+
+with open("csrc/tests/algorithm/data/river_test_case.json") as handle:
+    fixture = json.load(handle)
+
+session = solve_poker(
+    fixture,
+    {
+        "iterations": 500,
+        "num_threads": 10,
+        "exploitability_check_interval": 50,
+        "target_exploitability": -1.0,
+    },
+)
+
+print(session.metadata())
+for checkpoint in session.solve_log():
+    print(checkpoint)
+
+root_strategy = session.node_strategy_matrix("")
+```
+
+`node_strategy_matrix(action_history, player=None)` accepts either a compact
+history string such as `"x b3 c"` or a list of action strings.  It returns a
+13x13 Hold'em matrix payload with actions, per-cell strategy, `reach_mass`, and
+board-aware per-combo `reach`.  The reach normalization uses only combos that
+are actually available on the current board; for example, on a board containing
+two kings, `KK` is normalized over the one remaining king combo rather than the
+six preflop combos.
 
 ## Build
 

@@ -18,6 +18,8 @@ if "CXX" not in os.environ:
     clangxx = _clangxx()
     if clangxx:
         os.environ["CXX"] = clangxx
+if os.uname().sysname == "Darwin":
+    os.environ.setdefault("MACOSX_DEPLOYMENT_TARGET", "10.15")
 
 
 class BuildExt(build_ext):
@@ -49,13 +51,21 @@ ext_modules = [
         "fisher._core",
         [
             "csrc/src/binding/pybind.cc",
+            "csrc/src/algorithm/best_response_calculator.cc",
             "csrc/src/algorithm/cfr.cc",
+            "csrc/src/algorithm/cfr_storage.cc",
+            "csrc/src/algorithm/data_propagation.cc",
+            "csrc/src/algorithm/poker_cfr_solver.cc",
             "csrc/src/game/kuhn.cc",
             "csrc/src/game/poker/abstracted_action.cc",
             "csrc/src/game/poker/action_resolver.cc",
             "csrc/src/game/poker/action.cc",
             "csrc/src/game/poker/belief.cc",
             "csrc/src/game/poker/game_basic.cc",
+            "csrc/src/game/poker/hand_evaluator.cc",
+            "csrc/src/game/poker/terminal_cfv_calculator.cc",
+            "csrc/src/game/poker/terminal_win_prob_matrix.cc",
+            "csrc/src/game/poker/isomorphic_mapping.cc",
             "csrc/src/game/poker/node_state.cc",
             "csrc/src/game/poker/poker_cards_isomorphic_index.cc",
             "csrc/src/game/poker/poker_card.cc",
@@ -68,6 +78,7 @@ ext_modules = [
             "third_party/hand-isomorphism/src/hand_index.c",
         ],
         include_dirs=["csrc/include", "third_party/hand-isomorphism/src"],
+        define_macros=[("FISHER_LOOKUP_CACHE_DIR", '"build/cache"')],
         cxx_std=17,
         extra_compile_args=["-O3"],
     ),

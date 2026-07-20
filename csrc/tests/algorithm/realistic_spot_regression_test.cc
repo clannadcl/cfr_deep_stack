@@ -6,9 +6,10 @@
 #include <iomanip>
 #include <iostream>
 #include <memory>
+#include <optional>
+#include <sstream>
 #include <stdexcept>
 #include <string>
-#include <sstream>
 #include <vector>
 
 #include "algorithm/best_response_calculator.h"
@@ -24,13 +25,13 @@
 
 namespace {
 
-void Expect(bool condition, const char* message) {
+void Expect(bool condition, const char *message) {
   if (!condition) {
     throw std::runtime_error(message);
   }
 }
 
-float SumWeights(const std::vector<float>& values) {
+float SumWeights(const std::vector<float> &values) {
   float sum = 0.0f;
   for (float value : values) {
     sum += value;
@@ -38,7 +39,7 @@ float SumWeights(const std::vector<float>& values) {
   return sum;
 }
 
-bool IsFiniteVector(const std::vector<float>& values) {
+bool IsFiniteVector(const std::vector<float> &values) {
   for (float value : values) {
     if (!std::isfinite(value)) {
       return false;
@@ -66,16 +67,28 @@ struct SpotConfig {
   std::vector<std::string> ranges;
   fisher::game::poker::AbstractedBetStringConfig bets;
   fisher::game::poker::AbstractedDonkBetStringConfig donk_bets;
+  std::optional<fisher::game::poker::AbstractedBetStringConfig> preflop_bets;
+  std::optional<fisher::game::poker::AbstractedBetStringConfig> flop_bets;
+  std::optional<fisher::game::poker::AbstractedBetStringConfig> turn_bets;
+  std::optional<fisher::game::poker::AbstractedBetStringConfig> river_bets;
+  std::optional<fisher::game::poker::AbstractedDonkBetStringConfig>
+      preflop_donk_bets;
+  std::optional<fisher::game::poker::AbstractedDonkBetStringConfig>
+      flop_donk_bets;
+  std::optional<fisher::game::poker::AbstractedDonkBetStringConfig>
+      turn_donk_bets;
+  std::optional<fisher::game::poker::AbstractedDonkBetStringConfig>
+      river_donk_bets;
 };
 
-void SkipWhitespace(const std::string& text, std::size_t* index) {
+void SkipWhitespace(const std::string &text, std::size_t *index) {
   while (*index < text.size() &&
          std::isspace(static_cast<unsigned char>(text[*index]))) {
     ++(*index);
   }
 }
 
-std::string ParseJsonString(const std::string& text, std::size_t* index) {
+std::string ParseJsonString(const std::string &text, std::size_t *index) {
   if (*index >= text.size() || text[*index] != '"') {
     throw std::runtime_error("expected JSON string");
   }
@@ -95,28 +108,28 @@ std::string ParseJsonString(const std::string& text, std::size_t* index) {
       const char escaped = text[*index];
       ++(*index);
       switch (escaped) {
-        case '"':
-        case '\\':
-        case '/':
-          value.push_back(escaped);
-          break;
-        case 'b':
-          value.push_back('\b');
-          break;
-        case 'f':
-          value.push_back('\f');
-          break;
-        case 'n':
-          value.push_back('\n');
-          break;
-        case 'r':
-          value.push_back('\r');
-          break;
-        case 't':
-          value.push_back('\t');
-          break;
-        default:
-          throw std::runtime_error("unsupported JSON escape");
+      case '"':
+      case '\\':
+      case '/':
+        value.push_back(escaped);
+        break;
+      case 'b':
+        value.push_back('\b');
+        break;
+      case 'f':
+        value.push_back('\f');
+        break;
+      case 'n':
+        value.push_back('\n');
+        break;
+      case 'r':
+        value.push_back('\r');
+        break;
+      case 't':
+        value.push_back('\t');
+        break;
+      default:
+        throw std::runtime_error("unsupported JSON escape");
       }
     } else {
       value.push_back(current);
@@ -125,7 +138,7 @@ std::string ParseJsonString(const std::string& text, std::size_t* index) {
   throw std::runtime_error("unterminated JSON string");
 }
 
-std::size_t FindJsonValue(const std::string& text, const std::string& key) {
+std::size_t FindJsonValue(const std::string &text, const std::string &key) {
   const std::string needle = "\"" + key + "\"";
   const std::size_t key_index = text.find(needle);
   if (key_index == std::string::npos) {
@@ -140,8 +153,13 @@ std::size_t FindJsonValue(const std::string& text, const std::string& key) {
   return value_index;
 }
 
-std::string ExtractBracketedValue(const std::string& text,
-                                  const std::string& key, char open,
+bool HasJsonField(const std::string &text, const std::string &key) {
+  const std::string needle = "\"" + key + "\"";
+  return text.find(needle) != std::string::npos;
+}
+
+std::string ExtractBracketedValue(const std::string &text,
+                                  const std::string &key, char open,
                                   char close) {
   const std::size_t begin = FindJsonValue(text, key);
   if (begin >= text.size() || text[begin] != open) {
@@ -179,7 +197,7 @@ std::string ExtractBracketedValue(const std::string& text,
   throw std::runtime_error("unterminated JSON bracketed value: " + key);
 }
 
-std::vector<std::string> ParseJsonStringArray(const std::string& text) {
+std::vector<std::string> ParseJsonStringArray(const std::string &text) {
   std::size_t index = 0;
   SkipWhitespace(text, &index);
   if (index >= text.size() || text[index] != '[') {
@@ -215,33 +233,33 @@ std::vector<std::string> ParseJsonStringArray(const std::string& text) {
   return values;
 }
 
-std::string ExtractJsonStringField(const std::string& text,
-                                   const std::string& key) {
+std::string ExtractJsonStringField(const std::string &text,
+                                   const std::string &key) {
   std::size_t index = FindJsonValue(text, key);
   return ParseJsonString(text, &index);
 }
 
-float ExtractJsonFloatField(const std::string& text, const std::string& key) {
+float ExtractJsonFloatField(const std::string &text, const std::string &key) {
   const std::size_t begin = FindJsonValue(text, key);
   std::size_t parsed = 0;
   try {
     return std::stof(text.substr(begin), &parsed);
-  } catch (const std::exception&) {
+  } catch (const std::exception &) {
     throw std::runtime_error("invalid JSON float for key: " + key);
   }
 }
 
-int ExtractJsonIntField(const std::string& text, const std::string& key) {
+int ExtractJsonIntField(const std::string &text, const std::string &key) {
   const std::size_t begin = FindJsonValue(text, key);
   std::size_t parsed = 0;
   try {
     return std::stoi(text.substr(begin), &parsed);
-  } catch (const std::exception&) {
+  } catch (const std::exception &) {
     throw std::runtime_error("invalid JSON integer for key: " + key);
   }
 }
 
-bool ExtractJsonBoolField(const std::string& text, const std::string& key) {
+bool ExtractJsonBoolField(const std::string &text, const std::string &key) {
   const std::size_t begin = FindJsonValue(text, key);
   if (text.compare(begin, 4, "true") == 0) {
     return true;
@@ -252,8 +270,8 @@ bool ExtractJsonBoolField(const std::string& text, const std::string& key) {
   throw std::runtime_error("invalid JSON bool for key: " + key);
 }
 
-std::array<float, 2> ExtractJsonFloatArray2(const std::string& text,
-                                            const std::string& key) {
+std::array<float, 2> ExtractJsonFloatArray2(const std::string &text,
+                                            const std::string &key) {
   const std::string array_text = ExtractBracketedValue(text, key, '[', ']');
   std::size_t index = 1;
   SkipWhitespace(array_text, &index);
@@ -276,13 +294,13 @@ std::array<float, 2> ExtractJsonFloatArray2(const std::string& text,
   return {first, second};
 }
 
-std::vector<std::string> ExtractJsonStringArrayField(
-    const std::string& text, const std::string& key) {
+std::vector<std::string> ExtractJsonStringArrayField(const std::string &text,
+                                                     const std::string &key) {
   return ParseJsonStringArray(ExtractBracketedValue(text, key, '[', ']'));
 }
 
-fisher::game::poker::AbstractedBetStringConfig ExtractJsonStringMatrixField(
-    const std::string& text, const std::string& key) {
+fisher::game::poker::AbstractedBetStringConfig
+ExtractJsonStringMatrixField(const std::string &text, const std::string &key) {
   const std::string matrix_text = ExtractBracketedValue(text, key, '[', ']');
   std::size_t index = 1;
   fisher::game::poker::AbstractedBetStringConfig matrix;
@@ -315,8 +333,8 @@ fisher::game::poker::AbstractedBetStringConfig ExtractJsonStringMatrixField(
         }
       }
     }
-    matrix.push_back(ParseJsonStringArray(
-        matrix_text.substr(row_begin, index - row_begin)));
+    matrix.push_back(
+        ParseJsonStringArray(matrix_text.substr(row_begin, index - row_begin)));
     SkipWhitespace(matrix_text, &index);
     if (index < matrix_text.size() && matrix_text[index] == ',') {
       ++index;
@@ -324,31 +342,40 @@ fisher::game::poker::AbstractedBetStringConfig ExtractJsonStringMatrixField(
   }
 }
 
-fisher::game::poker::Action ParseAction(const std::string& action) {
+fisher::game::poker::Action ParseAction(const std::string &action) {
   using fisher::game::poker::Action;
-  if (action == "x") return Action::Check();
-  if (action == "f") return Action::Fold();
-  if (action == "c") return Action::Call();
-  if (action == "C") return Action::Chance();
+  if (action == "x")
+    return Action::Check();
+  if (action == "f")
+    return Action::Fold();
+  if (action == "c")
+    return Action::Call();
+  if (action == "C")
+    return Action::Chance();
   if (action.size() > 1 && action[0] == 'b') {
     return Action::Bet(std::stof(action.substr(1)));
   }
   throw std::runtime_error("unsupported action fixture value");
 }
 
-std::vector<fisher::game::poker::Action> ParseActionHistory(
-    const std::vector<std::string>& actions) {
+std::vector<fisher::game::poker::Action>
+ParseActionHistory(const std::vector<std::string> &actions) {
   std::vector<fisher::game::poker::Action> parsed;
   parsed.reserve(actions.size());
-  for (const std::string& action : actions) {
+  for (const std::string &action : actions) {
     parsed.push_back(ParseAction(action));
   }
   return parsed;
 }
 
-SpotConfig LoadTestCaseConfig(const std::string& file_name) {
-  const std::string path =
-      std::string(FISHER_TEST_DATA_DIR) + "/" + file_name;
+bool TestCaseFixtureExists(const std::string &file_name) {
+  const std::string path = std::string(FISHER_TEST_DATA_DIR) + "/" + file_name;
+  std::ifstream input(path);
+  return input.good();
+}
+
+SpotConfig LoadTestCaseConfig(const std::string &file_name) {
+  const std::string path = std::string(FISHER_TEST_DATA_DIR) + "/" + file_name;
   std::ifstream input(path);
   if (!input.is_open()) {
     throw std::runtime_error("failed to open test case fixture: " + file_name);
@@ -373,16 +400,79 @@ SpotConfig LoadTestCaseConfig(const std::string& file_name) {
   config.rake_enabled = ExtractJsonBoolField(text, "enabled");
   config.rake_percentage = ExtractJsonFloatField(text, "percentage");
   config.rake_cap = ExtractJsonFloatField(text, "cap");
-  config.root_action_history =
-      ParseActionHistory(ExtractJsonStringArrayField(text,
-                                                     "root_action_history"));
+  config.root_action_history = ParseActionHistory(
+      ExtractJsonStringArrayField(text, "root_action_history"));
   config.ranges = ExtractJsonStringArrayField(text, "ranges");
   config.bets = ExtractJsonStringMatrixField(text, "bets");
   config.donk_bets = ExtractJsonStringArrayField(text, "donk_bets");
+  if (HasJsonField(text, "preflop_bets")) {
+    config.preflop_bets = ExtractJsonStringMatrixField(text, "preflop_bets");
+  }
+  if (HasJsonField(text, "flop_bets")) {
+    config.flop_bets = ExtractJsonStringMatrixField(text, "flop_bets");
+  }
+  if (HasJsonField(text, "turn_bets")) {
+    config.turn_bets = ExtractJsonStringMatrixField(text, "turn_bets");
+  }
+  if (HasJsonField(text, "river_bets")) {
+    config.river_bets = ExtractJsonStringMatrixField(text, "river_bets");
+  }
+  if (HasJsonField(text, "preflop_donk_bets")) {
+    config.preflop_donk_bets =
+        ExtractJsonStringArrayField(text, "preflop_donk_bets");
+  }
+  if (HasJsonField(text, "flop_donk_bets")) {
+    config.flop_donk_bets = ExtractJsonStringArrayField(text, "flop_donk_bets");
+  }
+  if (HasJsonField(text, "turn_donk_bets")) {
+    config.turn_donk_bets = ExtractJsonStringArrayField(text, "turn_donk_bets");
+  }
+  if (HasJsonField(text, "river_donk_bets")) {
+    config.river_donk_bets =
+        ExtractJsonStringArrayField(text, "river_donk_bets");
+  }
   if (config.ranges.size() != 2) {
     throw std::runtime_error("turn test case fixture must contain 2 ranges");
   }
   return config;
+}
+
+fisher::game::poker::TreeAbstractedBets
+BuildAbstractedBets(const SpotConfig &config) {
+  using fisher::game::poker::PokerRound;
+  fisher::game::poker::TreeAbstractedBets abstracted_bets(config.bets,
+                                                          config.donk_bets);
+  if (config.preflop_bets.has_value()) {
+    abstracted_bets.SetStreetBets(PokerRound::kPreflop,
+                                  config.preflop_bets.value());
+  }
+  if (config.flop_bets.has_value()) {
+    abstracted_bets.SetStreetBets(PokerRound::kFlop, config.flop_bets.value());
+  }
+  if (config.turn_bets.has_value()) {
+    abstracted_bets.SetStreetBets(PokerRound::kTurn, config.turn_bets.value());
+  }
+  if (config.river_bets.has_value()) {
+    abstracted_bets.SetStreetBets(PokerRound::kRiver,
+                                  config.river_bets.value());
+  }
+  if (config.preflop_donk_bets.has_value()) {
+    abstracted_bets.SetDonkBets(PokerRound::kPreflop,
+                                config.preflop_donk_bets.value());
+  }
+  if (config.flop_donk_bets.has_value()) {
+    abstracted_bets.SetDonkBets(PokerRound::kFlop,
+                                config.flop_donk_bets.value());
+  }
+  if (config.turn_donk_bets.has_value()) {
+    abstracted_bets.SetDonkBets(PokerRound::kTurn,
+                                config.turn_donk_bets.value());
+  }
+  if (config.river_donk_bets.has_value()) {
+    abstracted_bets.SetDonkBets(PokerRound::kRiver,
+                                config.river_donk_bets.value());
+  }
+  return abstracted_bets;
 }
 
 double MillisecondsSince(std::chrono::steady_clock::time_point begin,
@@ -390,7 +480,7 @@ double MillisecondsSince(std::chrono::steady_clock::time_point begin,
   return std::chrono::duration<double, std::milli>(end - begin).count();
 }
 
-}  // namespace
+} // namespace
 
 int main() {
   using fisher::algorithm::PokerCfrSolver;
@@ -404,6 +494,20 @@ int main() {
   using fisher::game::poker::TreeAbstractedBets;
 
   std::cout << std::fixed << std::setprecision(3);
+  const std::vector<std::string> required_fixtures = {
+      "turn_test_case.json",
+      "turn_ksqh4dkc_utg_vs_bb.json",
+      "river_test_case.json",
+  };
+  for (const std::string &fixture_name : required_fixtures) {
+    if (!TestCaseFixtureExists(fixture_name)) {
+      std::cout << "skipping realistic_spot_regression_test: missing local "
+                   "fixture "
+                << fixture_name << '\n';
+      return 0;
+    }
+  }
+
   const auto load_begin = std::chrono::steady_clock::now();
   SpotConfig fixture = LoadTestCaseConfig("turn_test_case.json");
   const auto load_end = std::chrono::steady_clock::now();
@@ -412,7 +516,7 @@ int main() {
   GameBasic game(RakeConfig{/*enabled=*/fixture.rake_enabled,
                             /*percentage=*/fixture.rake_percentage,
                             /*cap=*/fixture.rake_cap});
-  TreeAbstractedBets abstracted_bets(fixture.bets, fixture.donk_bets);
+  TreeAbstractedBets abstracted_bets = BuildAbstractedBets(fixture);
   auto setup = std::make_shared<SubgameSetup>(SubgameSetup::Args(
       PokerCards(fixture.board_cards), fixture.common_pot, fixture.stacks,
       fixture.bet_total, fixture.bet_current_round, fixture.current_player,
@@ -428,10 +532,8 @@ int main() {
   Expect(setup->Board().ToString() == fixture.board_cards, "board mismatch");
   Expect(setup->Street() == PokerRound::kTurn, "street mismatch");
   Expect(setup->Pot() == fixture.common_pot, "pot mismatch");
-  Expect(setup->Stacks()[0] == fixture.stacks[0],
-         "player 0 stack mismatch");
-  Expect(setup->Stacks()[1] == fixture.stacks[1],
-         "player 1 stack mismatch");
+  Expect(setup->Stacks()[0] == fixture.stacks[0], "player 0 stack mismatch");
+  Expect(setup->Stacks()[1] == fixture.stacks[1], "player 1 stack mismatch");
   Expect(setup->CurrentPlayer() == fixture.current_player,
          "turn first actor should be BB");
   Expect(setup->LastAggressor() == fixture.previous_street_aggressor,
@@ -442,16 +544,15 @@ int main() {
   Expect(setup->BasicGame().Rake().cap == fixture.rake_cap,
          "rake cap mismatch");
 
-  const auto& belief = setup->RootBelief().Belief();
+  const auto &belief = setup->RootBelief().Belief();
   Expect(belief.size() == 2, "root belief should contain two players");
   Expect(SumWeights(belief[0]) > 0.0f, "BB range should be non-empty");
   Expect(SumWeights(belief[1]) > 0.0f, "BTN range should be non-empty");
 
   for (int player = 0; player < GameBasic::kNumPlayers; ++player) {
     for (int hand_index = 0; hand_index < GameBasic::kNumHands; ++hand_index) {
-      const float weight =
-          belief[static_cast<std::size_t>(player)]
-                [static_cast<std::size_t>(hand_index)];
+      const float weight = belief[static_cast<std::size_t>(player)]
+                                 [static_cast<std::size_t>(hand_index)];
       if (game.HandFromIndex(hand_index).HasCollision(setup->Board())) {
         Expect(weight == 0.0f, "board-blocked root hand should be zero");
       }
@@ -466,7 +567,7 @@ int main() {
          "known BTN hand should be parsed");
 
   IsomorphicMappingTable table(setup->BasicGame(), setup->RootBelief());
-  const auto& mapping = table.Get(setup->Board());
+  const auto &mapping = table.Get(setup->Board());
   const fisher::game::poker::IsomorphicMapping full_mapping(
       setup->BasicGame(), setup->Board(),
       std::vector<bool>(GameBasic::kNumHands, true));
@@ -498,14 +599,113 @@ int main() {
     solver.RunIteration();
   }
   const auto iterations_end = std::chrono::steady_clock::now();
-  std::cout << "iterations=" << kTurnIterations
-            << " total_iteration_ms="
+  std::cout << "iterations=" << kTurnIterations << " total_iteration_ms="
             << MillisecondsSince(iterations_begin, iterations_end) << '\n';
 
   Expect(IsFiniteVector(solver.CurrentStrategyData()),
          "current strategy should remain finite");
   Expect(IsFiniteVector(solver.AverageStrategyData()),
          "average strategy should remain finite");
+
+  const auto ks_turn_load_begin = std::chrono::steady_clock::now();
+  SpotConfig ks_turn_fixture =
+      LoadTestCaseConfig("turn_ksqh4dkc_utg_vs_bb.json");
+  const auto ks_turn_load_end = std::chrono::steady_clock::now();
+  const auto ks_turn_setup_begin = std::chrono::steady_clock::now();
+  GameBasic ks_turn_game(
+      RakeConfig{/*enabled=*/ks_turn_fixture.rake_enabled,
+                 /*percentage=*/ks_turn_fixture.rake_percentage,
+                 /*cap=*/ks_turn_fixture.rake_cap});
+  TreeAbstractedBets ks_turn_abstracted_bets =
+      BuildAbstractedBets(ks_turn_fixture);
+  auto ks_turn_setup = std::make_shared<SubgameSetup>(SubgameSetup::Args(
+      PokerCards(ks_turn_fixture.board_cards), ks_turn_fixture.common_pot,
+      ks_turn_fixture.stacks, ks_turn_fixture.bet_total,
+      ks_turn_fixture.bet_current_round, ks_turn_fixture.current_player,
+      ks_turn_fixture.previous_street_aggressor, ks_turn_fixture.raise_count,
+      ks_turn_fixture.root_action_history, ks_turn_fixture.ranges,
+      ks_turn_abstracted_bets, ks_turn_game,
+      /*bet_rounding=*/ks_turn_fixture.min_bet_increment,
+      /*min_raise_size=*/ks_turn_fixture.min_bet_increment));
+  const auto ks_turn_setup_end = std::chrono::steady_clock::now();
+
+  Expect(ks_turn_fixture.name == "turn_utg_vs_bb_ksqh4dkc",
+         "KsQh4dKc fixture name mismatch");
+  Expect(ks_turn_fixture.round == "turn", "KsQh4dKc fixture round mismatch");
+  Expect(ks_turn_setup->Board().ToString() == ks_turn_fixture.board_cards,
+         "KsQh4dKc fixture board mismatch");
+  Expect(ks_turn_setup->Street() == PokerRound::kTurn,
+         "KsQh4dKc fixture should be turn");
+  Expect(std::fabs(ks_turn_setup->Pot() - 9.1f) < 1e-4f,
+         "KsQh4dKc fixture pot mismatch");
+  Expect(ks_turn_setup->Stacks()[0] == 95.7f, "KsQh4dKc BB stack mismatch");
+  Expect(ks_turn_setup->Stacks()[1] == 95.7f, "KsQh4dKc UTG stack mismatch");
+  Expect(ks_turn_setup->CurrentPlayer() == 0,
+         "KsQh4dKc current player should be BB");
+  Expect(ks_turn_setup->LastAggressor() == 1,
+         "KsQh4dKc last aggressor should be UTG");
+  Expect(ks_turn_setup->BasicGame().Rake().enabled,
+         "KsQh4dKc rake should be enabled");
+  Expect(std::fabs(ks_turn_setup->BasicGame().Rake().percentage - 0.05) < 1e-6,
+         "KsQh4dKc rake percentage mismatch");
+  Expect(std::fabs(ks_turn_setup->BasicGame().Rake().cap - 0.6) < 1e-6,
+         "KsQh4dKc rake cap mismatch");
+  Expect(ks_turn_abstracted_bets.GetBets(PokerRound::kTurn, 0).size() == 3,
+         "KsQh4dKc turn first bet config mismatch");
+  Expect(ks_turn_abstracted_bets.GetBets(PokerRound::kTurn, 1).size() == 3,
+         "KsQh4dKc turn raise config mismatch");
+  Expect(ks_turn_abstracted_bets.GetBets(PokerRound::kRiver, 0).size() == 1,
+         "KsQh4dKc river bet config should be simplified");
+  Expect(ks_turn_abstracted_bets.GetDonkBets(PokerRound::kTurn).size() == 1,
+         "KsQh4dKc turn donk config mismatch");
+
+  const auto &ks_belief = ks_turn_setup->RootBelief().Belief();
+  Expect(ks_belief.size() == 2,
+         "KsQh4dKc root belief should contain two players");
+  Expect(SumWeights(ks_belief[0]) > 0.0f,
+         "KsQh4dKc BB range should be non-empty");
+  Expect(SumWeights(ks_belief[1]) > 0.0f,
+         "KsQh4dKc UTG range should be non-empty");
+  Expect(ks_belief[0][static_cast<std::size_t>(
+             ks_turn_game.HandIndex(PokerHand("4c2c")))] > 0.0f,
+         "KsQh4dKc known BB combo should be parsed");
+  Expect(ks_belief[1][static_cast<std::size_t>(
+             ks_turn_game.HandIndex(PokerHand("Ac2c")))] > 0.0f,
+         "KsQh4dKc known UTG combo should be parsed");
+
+  IsomorphicMappingTable ks_turn_table(ks_turn_setup->BasicGame(),
+                                       ks_turn_setup->RootBelief());
+  const auto &ks_turn_mapping = ks_turn_table.Get(ks_turn_setup->Board());
+  Expect(ks_turn_mapping.NumIsoHands() > 0,
+         "KsQh4dKc restricted mapping should be non-empty");
+
+  const auto ks_turn_solver_begin = std::chrono::steady_clock::now();
+  PokerCfrSolver ks_turn_solver{PokerCfrSolver::Args(
+      ks_turn_setup, /*num_threads=*/1, /*max_iterations=*/1,
+      /*exploitability_check_interval=*/1,
+      /*target_exploitability=*/-1.0f)};
+  const auto ks_turn_solver_end = std::chrono::steady_clock::now();
+  Expect(ks_turn_solver.Tree().NumNodes() > 1,
+         "KsQh4dKc spot should build a tree");
+  Expect(!ks_turn_solver.TerminalNodeIds().empty(),
+         "KsQh4dKc spot should contain terminal nodes");
+  ks_turn_solver.RunIteration();
+  Expect(IsFiniteVector(ks_turn_solver.CurrentStrategyData()),
+         "KsQh4dKc current strategy should remain finite");
+  Expect(IsFiniteVector(ks_turn_solver.AverageStrategyData()),
+         "KsQh4dKc average strategy should remain finite");
+
+  std::cout << "fixture=" << ks_turn_fixture.name << " load_ms="
+            << MillisecondsSince(ks_turn_load_begin, ks_turn_load_end)
+            << " setup_ms="
+            << MillisecondsSince(ks_turn_setup_begin, ks_turn_setup_end)
+            << " solver_construct_ms="
+            << MillisecondsSince(ks_turn_solver_begin, ks_turn_solver_end)
+            << " threads=" << ks_turn_solver.NumThreads()
+            << " root_iso_hands=" << ks_turn_mapping.NumIsoHands()
+            << " nodes=" << ks_turn_solver.Tree().NumNodes()
+            << " terminal_nodes=" << ks_turn_solver.TerminalNodeIds().size()
+            << '\n';
 
   const auto river_load_begin = std::chrono::steady_clock::now();
   SpotConfig river_fixture = LoadTestCaseConfig("river_test_case.json");
@@ -514,8 +714,7 @@ int main() {
   GameBasic river_game(RakeConfig{/*enabled=*/river_fixture.rake_enabled,
                                   /*percentage=*/river_fixture.rake_percentage,
                                   /*cap=*/river_fixture.rake_cap});
-  TreeAbstractedBets river_abstracted_bets(river_fixture.bets,
-                                           river_fixture.donk_bets);
+  TreeAbstractedBets river_abstracted_bets = BuildAbstractedBets(river_fixture);
   auto river_setup = std::make_shared<SubgameSetup>(SubgameSetup::Args(
       PokerCards(river_fixture.board_cards), river_fixture.common_pot,
       river_fixture.stacks, river_fixture.bet_total,
@@ -528,7 +727,7 @@ int main() {
   const auto river_setup_end = std::chrono::steady_clock::now();
   IsomorphicMappingTable river_mapping_table(river_setup->BasicGame(),
                                              river_setup->RootBelief());
-  const auto& river_root_mapping =
+  const auto &river_root_mapping =
       river_mapping_table.Get(river_setup->Board());
   const fisher::game::poker::IsomorphicMapping river_full_mapping(
       river_setup->BasicGame(), river_setup->Board(),
@@ -539,21 +738,19 @@ int main() {
   Expect(river_fixture.round == "river", "river fixture round mismatch");
   Expect(river_setup->Street() == PokerRound::kRiver,
          "river setup should be river");
-  Expect(river_setup->Pot() == river_fixture.common_pot,
-         "river pot mismatch");
+  Expect(river_setup->Pot() == river_fixture.common_pot, "river pot mismatch");
 
   const float river_target = river_setup->Pot() * 0.001f;
 
   const auto run_river_solver = [&](int num_threads) {
     const auto river_solver_begin = std::chrono::steady_clock::now();
-    PokerCfrSolver river_solver{PokerCfrSolver::Args(
-        river_setup, num_threads, /*max_iterations=*/500,
-        /*exploitability_check_interval=*/50,
-        /*target_exploitability=*/-1.0f)};
+    PokerCfrSolver river_solver{
+        PokerCfrSolver::Args(river_setup, num_threads, /*max_iterations=*/500,
+                             /*exploitability_check_interval=*/50,
+                             /*target_exploitability=*/-1.0f)};
     const auto river_solver_end = std::chrono::steady_clock::now();
 
-    std::cout << "river_fixture=" << river_fixture.name
-              << " load_ms="
+    std::cout << "river_fixture=" << river_fixture.name << " load_ms="
               << MillisecondsSince(river_load_begin, river_load_end)
               << " setup_ms="
               << MillisecondsSince(river_setup_begin, river_setup_end)
@@ -601,10 +798,8 @@ int main() {
               << " threads=" << river_solver.NumThreads()
               << " reached_iteration=" << reached_iteration
               << " last_exploitability=" << last_exploitability
-              << " target=" << river_target
-              << " total_ms="
-              << MillisecondsSince(river_solve_begin, river_solve_end)
-              << '\n';
+              << " target=" << river_target << " total_ms="
+              << MillisecondsSince(river_solve_begin, river_solve_end) << '\n';
     Expect(last_exploitability >= -1e-4f,
            "river exploitability should be non-negative");
   };

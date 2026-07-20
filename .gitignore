@@ -14,12 +14,15 @@ __pycache__/
 pysrc/*/*.so
 pysrc/*.egg-info/
 build/
+build/strategy_plots/
 build-release/
 build-no-openblas/
 build/cache/
+strategy_plots/
 dist/
 cmake-build-*/
 CMakeFiles/
 CMakeCache.txt
 compile_commands.json
 Testing/
+csrc/tests/algorithm/data/

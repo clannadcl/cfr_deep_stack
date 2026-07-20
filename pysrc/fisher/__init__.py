@@ -1,10 +1,19 @@
-"""Thin Python API over the C++ Kuhn poker benchmark backend."""
+"""Thin Python API over the C++ poker backend."""
 
 from fisher._core import (
+    PokerSolveSession,
     build_game,
     nash_exploitability,
     policy_value,
     solve,
+    solve_poker,
 )
 
-__all__ = ["build_game", "solve", "policy_value", "nash_exploitability"]
+__all__ = [
+    "PokerSolveSession",
+    "build_game",
+    "solve",
+    "solve_poker",
+    "policy_value",
+    "nash_exploitability",
+]
