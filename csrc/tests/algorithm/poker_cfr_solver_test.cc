@@ -581,6 +581,37 @@ int main() {
     ExpectFinite(player1_ev.range_ev, "player 1 range EV should be finite");
     Expect(player0_ev.range_mass > 0.0f, "player 0 range mass should be positive");
     Expect(player1_ev.range_mass > 0.0f, "player 1 range mass should be positive");
+
+    const PokerCfrSolver::NodeEquityDetail player0_equity =
+        air_vs_nuts_solver.NodeEquity(0, 0);
+    const PokerCfrSolver::NodeEquityDetail player1_equity =
+        air_vs_nuts_solver.NodeEquity(0, 1);
+    Expect(player0_equity.node_id == 0 && player0_equity.player == 0,
+           "player 0 node equity identity mismatch");
+    Expect(player1_equity.node_id == 0 && player1_equity.player == 1,
+           "player 1 node equity identity mismatch");
+    Expect(player0_equity.equity.size() ==
+               static_cast<std::size_t>(solver_storage.NumHands(0)),
+           "player 0 node equity size mismatch");
+    Expect(player1_equity.equity.size() ==
+               static_cast<std::size_t>(solver_storage.NumHands(0)),
+           "player 1 node equity size mismatch");
+    for (float equity : player0_equity.equity) {
+      ExpectFinite(equity, "player 0 node equity should be finite");
+      Expect(equity >= 0.0f && equity <= 1.0f,
+             "player 0 node equity should be a probability");
+    }
+    for (float equity : player1_equity.equity) {
+      ExpectFinite(equity, "player 1 node equity should be finite");
+      Expect(equity >= 0.0f && equity <= 1.0f,
+             "player 1 node equity should be a probability");
+    }
+    ExpectNear(player0_equity.range_equity,
+               player0_equity.equity[static_cast<std::size_t>(air_hand)],
+               "single-hand player 0 range equity should match hand equity");
+    ExpectNear(player1_equity.range_equity,
+               player1_equity.equity[static_cast<std::size_t>(nuts_hand)],
+               "single-hand player 1 range equity should match hand equity");
   }
 
   {

@@ -62,6 +62,7 @@ ext_modules = [
             "csrc/src/game/poker/action.cc",
             "csrc/src/game/poker/belief.cc",
             "csrc/src/game/poker/game_basic.cc",
+            "csrc/src/game/poker/hand_equity_calculator.cc",
             "csrc/src/game/poker/hand_evaluator.cc",
             "csrc/src/game/poker/terminal_cfv_calculator.cc",
             "csrc/src/game/poker/terminal_win_prob_matrix.cc",

@@ -409,6 +409,7 @@ PokerCfrSolver::PokerCfrSolver(const Args &args)
       mapping_table_(setup_->BasicGame(), setup_->RootBelief()),
       storage_(tree_, &mapping_table_),
       terminal_cfv_calculator_(setup_->BasicGame(), evaluator_),
+      hand_equity_calculator_(setup_->BasicGame(), evaluator_),
       num_threads_(ResolveThreadCount(args.num_threads)),
       max_iterations_(ValidatePositiveInt(
           args.max_iterations, "Poker CFR max iterations must be positive")),
@@ -641,6 +642,25 @@ PokerCfrSolver::NodeEvDetail PokerCfrSolver::NodeEv(int node_id,
   detail.range_ev = denominator > static_cast<double>(kEvMassEpsilon)
                         ? static_cast<float>(numerator / denominator)
                         : 0.0f;
+  return detail;
+}
+
+PokerCfrSolver::NodeEquityDetail PokerCfrSolver::NodeEquity(int node_id,
+                                                            int player) {
+  const game::poker::PokerTreeNode &node = tree_.Node(node_id);
+  ValidatePlayer(player);
+  const game::poker::IsomorphicMapping &mapping = MappingForNode(node_id);
+  const game::poker::HandEquityResult result =
+      hand_equity_calculator_.Calculate(*node.node_state, player, mapping,
+                                         storage_.ReachBlock(node_id, player),
+                                         storage_.ReachBlock(node_id,
+                                                             1 - player));
+
+  NodeEquityDetail detail;
+  detail.node_id = node_id;
+  detail.player = player;
+  detail.equity = result.equity;
+  detail.range_equity = result.range_equity;
   return detail;
 }
 

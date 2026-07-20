@@ -494,6 +494,20 @@ py::dict PokerNodeStrategyMatrix(PokerSolveSession &session,
   return result;
 }
 
+py::dict PokerNodeEquity(PokerSolveSession &session, int node_id, int player) {
+  const auto &node = session.solver.Tree().Node(node_id);
+  const PokerCfrSolver::NodeEquityDetail detail =
+      session.solver.NodeEquity(node_id, player);
+
+  py::dict result;
+  result["node_id"] = detail.node_id;
+  result["player"] = detail.player;
+  result["board"] = node.node_state->Board().ToString();
+  result["equity"] = detail.equity;
+  result["range_equity"] = detail.range_equity;
+  return result;
+}
+
 py::dict PokerSolveMetadata(PokerSolveSession &session) {
   py::dict metadata;
   metadata["iterations"] = session.result.iterations;
@@ -543,6 +557,8 @@ PYBIND11_MODULE(_core, m) {
       .def("node_strategy_matrix", &PokerNodeStrategyMatrix,
            py::arg("action_history") = py::str(""),
            py::arg("player") = py::none())
+      .def("node_equity", &PokerNodeEquity, py::arg("node_id"),
+           py::arg("player"))
       .def("metadata", &PokerSolveMetadata)
       .def("solve_log", &PokerSolveLog)
       .def_property_readonly("iterations",

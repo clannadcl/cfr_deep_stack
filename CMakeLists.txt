@@ -25,6 +25,7 @@ add_library(fisher_core STATIC
   csrc/src/game/poker/action.cc
   csrc/src/game/poker/belief.cc
   csrc/src/game/poker/game_basic.cc
+  csrc/src/game/poker/hand_equity_calculator.cc
   csrc/src/game/poker/hand_evaluator.cc
   csrc/src/game/poker/terminal_cfv_calculator.cc
   csrc/src/game/poker/terminal_win_prob_matrix.cc
@@ -267,6 +268,18 @@ if(FISHER_BUILD_TESTS)
   )
 
   add_test(NAME hand_evaluator_test COMMAND hand_evaluator_test)
+
+  add_executable(hand_equity_calculator_test
+    csrc/tests/game/poker/hand_equity_calculator_test.cc
+  )
+
+  target_link_libraries(hand_equity_calculator_test
+    PRIVATE
+      fisher_core
+  )
+
+  add_test(NAME hand_equity_calculator_test
+           COMMAND hand_equity_calculator_test)
 
   add_executable(terminal_cfv_calculator_test
     csrc/tests/game/poker/terminal_cfv_calculator_test.cc

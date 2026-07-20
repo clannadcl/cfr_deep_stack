@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "algorithm/cfr_storage.h"
+#include "game/poker/hand_equity_calculator.h"
 #include "game/poker/hand_evaluator.h"
 #include "game/poker/isomorphic_mapping.h"
 #include "game/poker/poker_tree.h"
@@ -43,6 +44,13 @@ public:
     std::vector<float> hand_ev;
     float range_ev = 0.0f;
     float range_mass = 0.0f;
+  };
+
+  struct NodeEquityDetail {
+    int node_id = -1;
+    int player = -1;
+    std::vector<float> equity;
+    float range_equity = 0.0f;
   };
 
   struct Args {
@@ -96,6 +104,7 @@ public:
   float AverageStrategyAt(int node_id, int action_index, int hand_index,
                           float epsilon = 1e-12f) const;
   NodeEvDetail NodeEv(int node_id, int player) const;
+  NodeEquityDetail NodeEquity(int node_id, int player);
 
   const game::poker::PokerTree &Tree() const;
   int NumThreads() const;
@@ -158,6 +167,7 @@ private:
   CfrStorage storage_;
   game::poker::SevenCardLookupTable evaluator_;
   game::poker::TerminalCfvCalculator terminal_cfv_calculator_;
+  game::poker::HandEquityCalculator hand_equity_calculator_;
   std::vector<const game::poker::IsomorphicMapping *> node_mappings_;
   std::vector<NodeChildCache> node_child_caches_;
   std::vector<std::vector<int>> node_ids_by_depth_;
