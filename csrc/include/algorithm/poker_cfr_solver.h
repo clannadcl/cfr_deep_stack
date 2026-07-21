@@ -53,6 +53,12 @@ public:
     float range_equity = 0.0f;
   };
 
+  struct NodeCfvDetail {
+    int node_id = -1;
+    int player = -1;
+    std::vector<float> cfv;
+  };
+
   struct Args {
     explicit Args(std::shared_ptr<game::poker::SubgameSetup> setup,
                   int num_threads = 0, int max_iterations = 500,
@@ -103,6 +109,7 @@ public:
   std::vector<float> AverageStrategyData(float epsilon = 1e-12f) const;
   float AverageStrategyAt(int node_id, int action_index, int hand_index,
                           float epsilon = 1e-12f) const;
+  NodeCfvDetail NodeCfv(int node_id, int player) const;
   NodeEvDetail NodeEv(int node_id, int player) const;
   NodeEquityDetail NodeEquity(int node_id, int player);
 

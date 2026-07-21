@@ -607,6 +607,22 @@ float PokerCfrSolver::AverageStrategyAt(int node_id, int action_index,
          denominator;
 }
 
+PokerCfrSolver::NodeCfvDetail PokerCfrSolver::NodeCfv(int node_id,
+                                                      int player) const {
+  tree_.Node(node_id);
+  ValidatePlayer(player);
+
+  NodeCfvDetail detail;
+  detail.node_id = node_id;
+  detail.player = player;
+  detail.cfv.resize(static_cast<std::size_t>(storage_.NumHands(node_id)));
+  for (int hand = 0; hand < storage_.NumHands(node_id); ++hand) {
+    detail.cfv[static_cast<std::size_t>(hand)] =
+        storage_.CfvAt(node_id, player, hand);
+  }
+  return detail;
+}
+
 PokerCfrSolver::NodeEvDetail PokerCfrSolver::NodeEv(int node_id,
                                                     int player) const {
   if (!average_finalized_) {

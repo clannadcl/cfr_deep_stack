@@ -508,6 +508,19 @@ py::dict PokerNodeEquity(PokerSolveSession &session, int node_id, int player) {
   return result;
 }
 
+py::dict PokerNodeCfv(PokerSolveSession &session, int node_id, int player) {
+  const auto &node = session.solver.Tree().Node(node_id);
+  const PokerCfrSolver::NodeCfvDetail detail =
+      session.solver.NodeCfv(node_id, player);
+
+  py::dict result;
+  result["node_id"] = detail.node_id;
+  result["player"] = detail.player;
+  result["board"] = node.node_state->Board().ToString();
+  result["cfv"] = detail.cfv;
+  return result;
+}
+
 py::dict PokerSolveMetadata(PokerSolveSession &session) {
   py::dict metadata;
   metadata["iterations"] = session.result.iterations;
@@ -542,6 +555,23 @@ py::list PokerSolveLog(PokerSolveSession &session) {
   return checkpoints;
 }
 
+std::vector<int> RawToIsoIndices(const std::vector<int> &board_cards) {
+  std::vector<uint8_t> cards;
+  cards.reserve(board_cards.size());
+  for (int card : board_cards) {
+    if (card < 0 || card >= GameBasic::kDeckSize) {
+      throw std::invalid_argument("Board card id must be in [0, 51]");
+    }
+    cards.push_back(static_cast<uint8_t>(card));
+  }
+
+  const GameBasic game;
+  const PokerCards board(cards);
+  const IsomorphicMapping mapping(
+      game, board, std::vector<bool>(GameBasic::kNumHands, true));
+  return mapping.RawIndexToIsoIndex();
+}
+
 } // namespace
 
 PYBIND11_MODULE(_core, m) {
@@ -559,6 +589,7 @@ PYBIND11_MODULE(_core, m) {
            py::arg("player") = py::none())
       .def("node_equity", &PokerNodeEquity, py::arg("node_id"),
            py::arg("player"))
+      .def("node_cfv", &PokerNodeCfv, py::arg("node_id"), py::arg("player"))
       .def("metadata", &PokerSolveMetadata)
       .def("solve_log", &PokerSolveLog)
       .def_property_readonly("iterations",
@@ -574,4 +605,5 @@ PYBIND11_MODULE(_core, m) {
       });
   m.def("solve_poker", &SolvePoker, py::arg("spot_config"),
         py::arg("solver_config") = py::dict());
+  m.def("raw_to_iso_indices", &RawToIsoIndices, py::arg("board"));
 }

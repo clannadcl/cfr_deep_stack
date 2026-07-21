@@ -26,3 +26,7 @@ CMakeCache.txt
 compile_commands.json
 Testing/
 csrc/tests/algorithm/data/
+data/random_turn_spots/
+data/random_flop_chance_spots/
+data/turn_chance_targets/
+data/flop_chance_targets/

@@ -5,6 +5,7 @@ from fisher._core import (
     build_game,
     nash_exploitability,
     policy_value,
+    raw_to_iso_indices,
     solve,
     solve_poker,
 )
@@ -16,4 +17,5 @@ __all__ = [
     "solve_poker",
     "policy_value",
     "nash_exploitability",
+    "raw_to_iso_indices",
 ]

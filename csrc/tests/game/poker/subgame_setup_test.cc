@@ -5,6 +5,7 @@
 #include <vector>
 
 #include "game/poker/action.h"
+#include "game/poker/node_state.h"
 #include "game/poker/poker_cards.h"
 #include "game/poker/poker_cards_isomorphic_index.h"
 #include "game/poker/poker_hand.h"
@@ -58,6 +59,7 @@ fisher::game::poker::SubgameSetup::Args MakeArgs(
 int main() {
   using fisher::game::poker::Action;
   using fisher::game::poker::GameBasic;
+  using fisher::game::poker::NodeState;
   using fisher::game::poker::PokerCards;
   using fisher::game::poker::PokerHand;
   using fisher::game::poker::PokerRound;
@@ -104,6 +106,24 @@ int main() {
       MatrixBelief(1.0f), TreeAbstractedBets(TreeAbstractedBets::Args{}),
       GameBasic(), 0.1f, 1.0f));
   Expect(turn_setup.Street() == PokerRound::kTurn, "turn street mismatch");
+
+  SubgameSetup flop_chance_setup(SubgameSetup::Args(
+      PokerCards("AsKdQh"), 10.0f, std::array<float, 2>{50.0f, 50.0f},
+      std::array<float, 2>{0.0f, 0.0f},
+      std::array<float, 2>{0.0f, 0.0f}, NodeState::kChancePlayer, -1, 0, {},
+      MatrixBelief(1.0f), TreeAbstractedBets(TreeAbstractedBets::Args{}),
+      GameBasic(), 0.1f, 1.0f));
+  Expect(flop_chance_setup.CurrentPlayer() == NodeState::kChancePlayer,
+         "flop chance root actor mismatch");
+
+  SubgameSetup turn_chance_setup(SubgameSetup::Args(
+      PokerCards("AsKdQh2c"), 10.0f, std::array<float, 2>{50.0f, 50.0f},
+      std::array<float, 2>{0.0f, 0.0f},
+      std::array<float, 2>{0.0f, 0.0f}, NodeState::kChancePlayer, -1, 0, {},
+      MatrixBelief(1.0f), TreeAbstractedBets(TreeAbstractedBets::Args{}),
+      GameBasic(), 0.1f, 1.0f));
+  Expect(turn_chance_setup.CurrentPlayer() == NodeState::kChancePlayer,
+         "turn chance root actor mismatch");
 
   SubgameSetup river_setup(SubgameSetup::Args(
       PokerCards("AsKdQh2c3d"), 10.0f, std::array<float, 2>{50.0f, 50.0f},
@@ -198,6 +218,34 @@ int main() {
         SubgameSetup invalid(args);
       },
       "invalid current player should be invalid");
+  ExpectInvalidArgument(
+      [] {
+        auto args = MakeArgs(MatrixBelief(1.0f));
+        args.board = PokerCards("AsKdQh2c3d");
+        args.current_player = NodeState::kChancePlayer;
+        args.bet_current_round = std::array<float, 2>{0.0f, 0.0f};
+        args.raise_count = 0;
+        SubgameSetup invalid(args);
+      },
+      "river chance root should be invalid");
+  ExpectInvalidArgument(
+      [] {
+        auto args = MakeArgs(MatrixBelief(1.0f));
+        args.current_player = NodeState::kChancePlayer;
+        args.bet_current_round = std::array<float, 2>{1.0f, 1.0f};
+        args.raise_count = 0;
+        SubgameSetup invalid(args);
+      },
+      "chance root with live bets should be invalid");
+  ExpectInvalidArgument(
+      [] {
+        auto args = MakeArgs(MatrixBelief(1.0f));
+        args.current_player = NodeState::kChancePlayer;
+        args.bet_current_round = std::array<float, 2>{0.0f, 0.0f};
+        args.raise_count = 1;
+        SubgameSetup invalid(args);
+      },
+      "chance root with raise count should be invalid");
   ExpectInvalidArgument(
       [] {
         auto args = MakeArgs(MatrixBelief(1.0f));

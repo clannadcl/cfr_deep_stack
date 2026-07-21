@@ -258,5 +258,37 @@ int main() {
   Expect(SameCard(PokerCard("2c"), PokerCard("2c")),
          "SameCard helper sanity check failed");
 
+  auto direct_flop_chance_setup =
+      MakeSetup(PokerCards("AsKdQh"), 10.0f, {0.0f, 0.0f}, {0.0f, 0.0f},
+                {0.0f, 0.0f}, NodeState::kChancePlayer, -1, 0);
+  PokerTree direct_flop_chance_tree(direct_flop_chance_setup);
+  Expect(direct_flop_chance_tree.Root().node_state->ActorPlayer() ==
+             NodeState::kChancePlayer,
+         "direct flop chance root should be chance node");
+  Expect(direct_flop_chance_tree.Root().num_children == 49,
+         "direct flop chance should create 49 children");
+  Expect(direct_flop_chance_tree.FindChanceChild(0, PokerCard("2c")).value() ==
+             1,
+         "direct flop chance first child mismatch");
+  Expect(direct_flop_chance_tree.Node(1).node_state->Board().ToString() ==
+             "AsKdQh2c",
+         "direct flop chance child board mismatch");
+
+  auto direct_turn_chance_setup =
+      MakeSetup(PokerCards("AsKdQh2c"), 10.0f, {0.0f, 0.0f},
+                {0.0f, 0.0f}, {0.0f, 0.0f}, NodeState::kChancePlayer, -1, 0);
+  PokerTree direct_turn_chance_tree(direct_turn_chance_setup);
+  Expect(direct_turn_chance_tree.Root().node_state->ActorPlayer() ==
+             NodeState::kChancePlayer,
+         "direct turn chance root should be chance node");
+  Expect(direct_turn_chance_tree.Root().num_children == 48,
+         "direct turn chance should create 48 children");
+  Expect(direct_turn_chance_tree.FindChanceChild(0, PokerCard("2d")).value() ==
+             1,
+         "direct turn chance first child mismatch");
+  Expect(direct_turn_chance_tree.Node(1).node_state->Board().ToString() ==
+             "AsKdQh2c2d",
+         "direct turn chance child board mismatch");
+
   return 0;
 }

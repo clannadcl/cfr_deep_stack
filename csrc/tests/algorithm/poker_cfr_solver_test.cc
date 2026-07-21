@@ -582,6 +582,19 @@ int main() {
     Expect(player0_ev.range_mass > 0.0f, "player 0 range mass should be positive");
     Expect(player1_ev.range_mass > 0.0f, "player 1 range mass should be positive");
 
+    const PokerCfrSolver::NodeCfvDetail player0_cfv =
+        air_vs_nuts_solver.NodeCfv(0, 0);
+    const PokerCfrSolver::NodeCfvDetail player1_cfv =
+        air_vs_nuts_solver.NodeCfv(0, 1);
+    Expect(player0_cfv.node_id == 0 && player0_cfv.player == 0,
+           "player 0 node CFV identity mismatch");
+    Expect(player1_cfv.node_id == 0 && player1_cfv.player == 1,
+           "player 1 node CFV identity mismatch");
+    ExpectVectorNear(player0_cfv.cfv, player0_ev.cfv,
+                     "node CFV should expose storage CFV without EV scaling");
+    ExpectVectorNear(player1_cfv.cfv, player1_ev.cfv,
+                     "node CFV should expose player 1 storage CFV");
+
     const PokerCfrSolver::NodeEquityDetail player0_equity =
         air_vs_nuts_solver.NodeEquity(0, 0);
     const PokerCfrSolver::NodeEquityDetail player1_equity =

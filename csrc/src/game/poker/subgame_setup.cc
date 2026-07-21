@@ -14,6 +14,13 @@ void ValidatePlayerIndex(int player, const char* name) {
   }
 }
 
+void ValidateRootActor(int player) {
+  if (player != NodeState::kChancePlayer &&
+      (player < 0 || player >= GameBasic::kNumPlayers)) {
+    throw std::invalid_argument("Current player must be -1, 0, or 1");
+  }
+}
+
 void ValidateRootBeliefShape(
     const std::vector<std::vector<float>>& root_belief) {
   if (root_belief.size() != GameBasic::kNumPlayers) {
@@ -93,7 +100,7 @@ SubgameSetup::SubgameSetup(const Args& args)
           "Total bet cannot be smaller than current-round bet");
     }
   }
-  ValidatePlayerIndex(current_player_, "Current player must be 0 or 1");
+  ValidateRootActor(current_player_);
   if (last_aggressor_ != -1) {
     ValidatePlayerIndex(last_aggressor_, "Last aggressor must be -1, 0, or 1");
   }
@@ -105,6 +112,19 @@ SubgameSetup::SubgameSetup(const Args& args)
   }
   if (min_raise_size_ <= 0.0f) {
     throw std::invalid_argument("Min raise size must be positive");
+  }
+  if (current_player_ == NodeState::kChancePlayer) {
+    if (street_ != PokerRound::kFlop && street_ != PokerRound::kTurn) {
+      throw std::invalid_argument(
+          "Chance root must be on flop or turn before the next board card");
+    }
+    if (bet_current_round_[0] != 0 || bet_current_round_[1] != 0) {
+      throw std::invalid_argument(
+          "Chance root cannot have live current-round bets");
+    }
+    if (raise_count_ != 0) {
+      throw std::invalid_argument("Chance root raise count must be zero");
+    }
   }
 }
 

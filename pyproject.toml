@@ -9,6 +9,7 @@ description = "C++ CFR benchmark for Kuhn poker"
 readme = "README.md"
 requires-python = ">=3.9"
 dependencies = [
+  "numpy>=2.0",
 ]
 
 [dependency-groups]
