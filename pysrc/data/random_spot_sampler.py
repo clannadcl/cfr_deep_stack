@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import gzip
 import time
 from pathlib import Path
 
@@ -12,6 +13,30 @@ NUM_CARDS = 52
 NUM_HANDS = 1326
 NUM_PLAYERS = 2
 TURN_ROUND_ID = 2
+DEFAULT_SPR_MIN = 0.05
+DEFAULT_SPR_MAX = 200.0
+MAX_RANGE_POOL_SAMPLE_ATTEMPTS = 1000
+
+
+def _load_range_pool(range_pool_path: Path | None) -> np.ndarray | None:
+    if range_pool_path is None:
+        return None
+
+    if range_pool_path.suffix == ".gz":
+        with gzip.open(range_pool_path, "rb") as file:
+            range_pool = np.load(file, allow_pickle=False)
+    else:
+        range_pool = np.load(range_pool_path, allow_pickle=False)
+
+    if range_pool.ndim != 3 or range_pool.shape[1:] != (NUM_PLAYERS, NUM_HANDS):
+        raise ValueError("range pool must have shape [num_ranges, 2, 1326]")
+    if range_pool.shape[0] <= 0:
+        raise ValueError("range pool must contain at least one range")
+    if not np.all(np.isfinite(range_pool)):
+        raise ValueError("range pool contains non-finite values")
+    if np.any(range_pool < 0.0):
+        raise ValueError("range pool contains negative weights")
+    return np.asarray(range_pool, dtype=np.float32)
 
 
 def _canonicalize_reach_by_isomorphism(
@@ -47,6 +72,7 @@ def generate_random_turn_spots(
     num_sample_per_file: int,
     output_dir: Path,
     seed: int,
+    range_pool_path: Path | None = None,
 ) -> list[Path]:
     if num_samples <= 0:
         raise ValueError("num_samples must be positive")
@@ -55,6 +81,7 @@ def generate_random_turn_spots(
 
     output_dir.mkdir(parents=True, exist_ok=True)
     rng = np.random.default_rng(seed)
+    range_pool = _load_range_pool(range_pool_path)
     output_files: list[Path] = []
     remaining = num_samples
     file_index = 0
@@ -62,21 +89,37 @@ def generate_random_turn_spots(
     while remaining > 0:
         count = min(remaining, num_sample_per_file)
         pot = np.ones(count, dtype=np.float32)
-        spr = rng.uniform(0.05, 250.0, size=count).astype(np.float32)
+        spr = rng.uniform(DEFAULT_SPR_MIN, DEFAULT_SPR_MAX, size=count).astype(
+            np.float32
+        )
         stacks = np.repeat(spr[:, None], NUM_PLAYERS, axis=1)
         rake_ratio = rng.uniform(0.0, 0.30, size=count).astype(np.float32)
         rake_cap = rng.uniform(0.0, 30.0, size=count).astype(np.float32)
         board = np.empty((count, 4), dtype=np.uint8)
         round_id = np.full(count, TURN_ROUND_ID, dtype=np.uint8)
-        reach = rng.random((count, NUM_PLAYERS, NUM_HANDS), dtype=np.float32)
+        reach = np.empty((count, NUM_PLAYERS, NUM_HANDS), dtype=np.float32)
 
         for sample_index in range(count):
-            board[sample_index] = rng.choice(
-                NUM_CARDS, size=4, replace=False
-            ).astype(np.uint8)
-            _canonicalize_reach_by_isomorphism(
-                board[sample_index], reach[sample_index]
-            )
+            for _ in range(MAX_RANGE_POOL_SAMPLE_ATTEMPTS):
+                board[sample_index] = rng.choice(
+                    NUM_CARDS, size=4, replace=False
+                ).astype(np.uint8)
+                if range_pool is None:
+                    reach[sample_index] = rng.random(
+                        (NUM_PLAYERS, NUM_HANDS), dtype=np.float32
+                    )
+                else:
+                    range_index = int(rng.integers(0, range_pool.shape[0]))
+                    reach[sample_index] = range_pool[range_index]
+                _canonicalize_reach_by_isomorphism(
+                    board[sample_index], reach[sample_index]
+                )
+                if np.all(reach[sample_index].sum(axis=1) > 0.0):
+                    break
+            else:
+                raise RuntimeError(
+                    "failed to sample a non-empty turn range after board blockers"
+                )
 
         output_path = output_dir / f"random_turn_spots_{file_index:06d}.npz"
         np.savez_compressed(
@@ -104,6 +147,12 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--num-sample-per-file", type=int, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument(
+        "--range-pool-path",
+        type=Path,
+        default=None,
+        help="Optional .npy or .npy.gz dense range pool with shape [N, 2, 1326].",
+    )
     return parser.parse_args()
 
 
@@ -115,6 +164,7 @@ def main() -> None:
         num_sample_per_file=args.num_sample_per_file,
         output_dir=args.output_dir,
         seed=args.seed,
+        range_pool_path=args.range_pool_path,
     )
     elapsed = time.perf_counter() - begin
     total_bytes = sum(path.stat().st_size for path in output_files)

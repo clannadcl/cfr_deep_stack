@@ -521,6 +521,11 @@ py::dict PokerNodeCfv(PokerSolveSession &session, int node_id, int player) {
   return result;
 }
 
+std::vector<int> PokerNodeRawToIsoIndices(PokerSolveSession &session,
+                                          int node_id) {
+  return session.solver.MappingForNode(node_id).RawIndexToIsoIndex();
+}
+
 py::dict PokerSolveMetadata(PokerSolveSession &session) {
   py::dict metadata;
   metadata["iterations"] = session.result.iterations;
@@ -590,6 +595,8 @@ PYBIND11_MODULE(_core, m) {
       .def("node_equity", &PokerNodeEquity, py::arg("node_id"),
            py::arg("player"))
       .def("node_cfv", &PokerNodeCfv, py::arg("node_id"), py::arg("player"))
+      .def("node_raw_to_iso_indices", &PokerNodeRawToIsoIndices,
+           py::arg("node_id"))
       .def("metadata", &PokerSolveMetadata)
       .def("solve_log", &PokerSolveLog)
       .def_property_readonly("iterations",

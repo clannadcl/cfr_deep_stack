@@ -1,8 +1,8 @@
 import numpy as np
 
 from fisher import raw_to_iso_indices
-from fisher.data import chance_target_generator
-from fisher.data.random_spot_sampler import generate_random_turn_spots
+from data import chance_target_generator
+from data.random_spot_sampler import generate_random_turn_spots
 
 
 RANKS = "23456789TJQKA"
@@ -19,6 +19,7 @@ def _card_string_to_ids(cards):
 
 
 def test_chance_target_generator_writes_raw_cfv_targets(tmp_path, monkeypatch):
+    """Writes chance-root solve metadata and expands restricted iso CFV to raw hands."""
     input_dir = tmp_path / "input"
     output_dir = tmp_path / "output"
     generate_random_turn_spots(
@@ -41,14 +42,20 @@ def test_chance_target_generator_writes_raw_cfv_targets(tmp_path, monkeypatch):
 
         def node_cfv(self, node_id, player):
             assert node_id == 0
-            board_ids = _card_string_to_ids(self.board_cards)
-            raw_to_iso = np.asarray(raw_to_iso_indices(board_ids), dtype=np.int32)
+            raw_to_iso = np.asarray(
+                self.node_raw_to_iso_indices(node_id), dtype=np.int32
+            )
             num_iso = int(raw_to_iso.max()) + 1
             cfv = [
                 float(player + 1) + float(index) / 1000.0
                 for index in range(num_iso)
             ]
             return {"node_id": node_id, "player": player, "cfv": cfv}
+
+        def node_raw_to_iso_indices(self, node_id):
+            assert node_id == 0
+            board_ids = _card_string_to_ids(self.board_cards)
+            return raw_to_iso_indices(board_ids)
 
     def fake_solve_poker(spot_config, solver_config):
         assert spot_config["current_player"] == -1

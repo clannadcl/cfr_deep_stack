@@ -107,17 +107,21 @@ def _build_spot_config(
     }
 
 
-def _expand_iso_cfv_to_raw(board: np.ndarray, iso_cfv: np.ndarray) -> np.ndarray:
-    raw_to_iso = np.asarray(
-        raw_to_iso_indices([int(card) for card in board]), dtype=np.int32
-    )
+def _expand_iso_cfv_to_raw(
+    board: np.ndarray, iso_cfv: np.ndarray, raw_to_iso: np.ndarray | None = None
+) -> np.ndarray:
+    if raw_to_iso is None:
+        raw_to_iso = np.asarray(
+            raw_to_iso_indices([int(card) for card in board]), dtype=np.int32
+        )
+    else:
+        raw_to_iso = np.asarray(raw_to_iso, dtype=np.int32)
     if raw_to_iso.shape != (NUM_HANDS,):
         raise RuntimeError("raw_to_iso_indices returned an unexpected shape")
     max_iso = int(raw_to_iso.max()) if np.any(raw_to_iso >= 0) else -1
     if iso_cfv.shape != (max_iso + 1,):
         raise RuntimeError(
-            "root CFV shape does not match the full board isomorphic mapping; "
-            "chance target generation currently expects dense legal ranges"
+            "root CFV shape does not match the board isomorphic mapping"
         )
     raw_cfv = np.zeros(NUM_HANDS, dtype=np.float32)
     valid = raw_to_iso >= 0
@@ -159,9 +163,10 @@ def _solve_one_sample(
     metadata = session.metadata()
 
     target_cfv = np.zeros((NUM_PLAYERS, NUM_HANDS), dtype=np.float32)
+    raw_to_iso = np.asarray(session.node_raw_to_iso_indices(0), dtype=np.int32)
     for player in range(NUM_PLAYERS):
         iso_cfv = np.asarray(session.node_cfv(0, player)["cfv"], dtype=np.float32)
-        target_cfv[player] = _expand_iso_cfv_to_raw(board, iso_cfv)
+        target_cfv[player] = _expand_iso_cfv_to_raw(board, iso_cfv, raw_to_iso)
 
     return (
         target_cfv,
@@ -352,7 +357,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--num-sample-per-file", type=int, required=True)
     parser.add_argument("--max-iterations", type=int, default=500)
     parser.add_argument("--exploitability-check-interval", type=int, default=50)
-    parser.add_argument("--target-exploitability-ratio", type=float, default=0.001)
+    parser.add_argument("--target-exploitability-ratio", type=float, default=0.0015)
     parser.add_argument("--num-threads", type=int, default=0)
     parser.add_argument("--max-samples", type=int, default=None)
     return parser.parse_args()

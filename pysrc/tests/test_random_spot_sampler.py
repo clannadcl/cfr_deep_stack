@@ -1,7 +1,9 @@
+import gzip
+
 import numpy as np
 
 from fisher import raw_to_iso_indices
-from fisher.data.random_spot_sampler import generate_random_turn_spots
+from data.random_spot_sampler import generate_random_turn_spots
 
 
 def _raw_hand_cards():
@@ -35,6 +37,7 @@ def _assert_reach_is_canonical(board, reach):
 
 
 def test_random_turn_spot_sampler_writes_dense_npz_files(tmp_path):
+    """Writes dense turn spot shards with valid boards and canonical iso reach."""
     output_files = generate_random_turn_spots(
         num_samples=25,
         num_sample_per_file=10,
@@ -65,7 +68,7 @@ def test_random_turn_spot_sampler_writes_dense_npz_files(tmp_path):
             assert data["reach"].shape == (count, 2, 1326)
             assert np.all(data["pot"] == 1.0)
             assert np.all(data["stacks"] >= 0.05)
-            assert np.all(data["stacks"] <= 250.0)
+            assert np.all(data["stacks"] <= 200.0)
             assert np.all(data["stacks"][:, 0] == data["stacks"][:, 1])
             assert np.all(data["rake_ratio"] >= 0.0)
             assert np.all(data["rake_ratio"] <= 0.30)
@@ -80,6 +83,7 @@ def test_random_turn_spot_sampler_writes_dense_npz_files(tmp_path):
 
 
 def test_random_turn_spot_sampler_is_seed_reproducible(tmp_path):
+    """Uses the RNG seed as the full reproducibility contract."""
     first_dir = tmp_path / "first"
     second_dir = tmp_path / "second"
     first_files = generate_random_turn_spots(
@@ -100,3 +104,40 @@ def test_random_turn_spot_sampler_is_seed_reproducible(tmp_path):
             assert set(first_data.files) == set(second_data.files)
             for key in first_data.files:
                 np.testing.assert_array_equal(first_data[key], second_data[key])
+
+
+def test_random_turn_spot_sampler_can_sample_from_dense_range_pool(tmp_path):
+    """Accepts .npy.gz range pools and rejects board-blocked empty ranges by resampling."""
+    range_pool = np.zeros((3, 2, 1326), dtype=np.float16)
+    range_pool[0, 0, 0:20] = 1.0
+    range_pool[0, 1, 20:40] = 0.5
+    range_pool[1, 0, 100:180] = 0.25
+    range_pool[1, 1, 200:260] = 1.0
+    range_pool[2, 0, 700:900] = 0.75
+    range_pool[2, 1, 900:1100] = 0.125
+
+    range_pool_path = tmp_path / "ranges.npy.gz"
+    with gzip.open(range_pool_path, "wb") as file:
+        np.save(file, range_pool)
+
+    output_files = generate_random_turn_spots(
+        num_samples=8,
+        num_sample_per_file=4,
+        output_dir=tmp_path / "spots",
+        seed=11,
+        range_pool_path=range_pool_path,
+    )
+
+    total_samples = 0
+    for path in output_files:
+        with np.load(path) as data:
+            count = data["reach"].shape[0]
+            total_samples += count
+            assert data["reach"].dtype == np.float32
+            assert np.all(data["reach"] >= 0.0)
+            assert np.all(data["reach"].sum(axis=2) > 0.0)
+            assert np.all(data["stacks"] <= 200.0)
+            for board, reach in zip(data["board"], data["reach"]):
+                _assert_reach_is_canonical(board, reach)
+
+    assert total_samples == 8

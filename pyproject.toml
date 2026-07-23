@@ -20,7 +20,7 @@ dev = [
 
 [tool.setuptools.packages.find]
 where = ["pysrc"]
-include = ["fisher*"]
+include = ["fisher*", "data*"]
 
 [tool.pytest.ini_options]
 testpaths = ["pysrc/tests"]

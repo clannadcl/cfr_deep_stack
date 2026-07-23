@@ -22,6 +22,8 @@ Development conventions are documented in `CONTRIBUTING.md`.
 - `csrc/src/binding`: pybind glue for the current Python API.
 - `csrc/tests`: C++ unit and regression tests.
 - `pysrc/fisher`: Python package that re-exports the pybind API.
+- `pysrc/data`: standalone data generation scripts for random spots and
+  chance-root CFV targets.
 - `pysrc/tests`: pytest smoke/convergence checks.
 - `third_party/hand-isomorphism`: Kevin Waugh hand indexer used for suit
   isomorphism.
@@ -159,6 +161,32 @@ board-aware per-combo `reach`.  The reach normalization uses only combos that
 are actually available on the current board; for example, on a board containing
 two kings, `KK` is normalized over the one remaining king combo rather than the
 six preflop combos.
+
+## Data Scripts
+
+DeepStack-style data utilities live outside the `fisher` API package under
+`pysrc/data`.
+
+Generate dense random turn spots:
+
+```bash
+uv run python -m data.random_spot_sampler \
+  --num-samples 1000 \
+  --num-sample-per-file 1000 \
+  --output-dir data/random_turn_spots \
+  --seed 0 \
+  --range-pool-path build/flop_chance_ranges_7000_weighted_new_space.npy.gz
+```
+
+Solve chance-root spots into raw 1326-hand CFV targets:
+
+```bash
+uv run python -m data.chance_target_generator \
+  --input-dir data/random_turn_spots \
+  --output-dir data/turn_chance_targets \
+  --num-sample-per-file 1000 \
+  --target-exploitability-ratio 0.0015
+```
 
 ## Build
 
