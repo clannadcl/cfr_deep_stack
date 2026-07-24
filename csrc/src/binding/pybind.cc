@@ -10,6 +10,7 @@
 #include <string>
 #include <vector>
 
+#include "algorithm/best_response_calculator.h"
 #include "algorithm/cfr.h"
 #include "algorithm/poker_cfr_solver.h"
 #include "game/kuhn.h"
@@ -343,17 +344,23 @@ std::string HandClassLabel(int row, int col) {
 
 struct PokerSolveSession {
   PokerSolveSession(std::shared_ptr<SubgameSetup> setup,
-                    const PokerCfrSolver::Args &args)
-      : setup(std::move(setup)), solver(args), result(solver.Solve()) {}
+                    const PokerCfrSolver::Args &args, bool auto_solve)
+      : setup(std::move(setup)), solver(args) {
+    result.target_exploitability = solver.TargetExploitability();
+    if (auto_solve) {
+      result = solver.Solve();
+    }
+  }
 
   std::shared_ptr<SubgameSetup> setup;
   PokerCfrSolver solver;
   PokerCfrSolver::SolveResult result;
 };
 
-std::shared_ptr<PokerSolveSession> SolvePoker(py::dict spot_config,
-                                              py::dict solver_config) {
-  auto setup = BuildPokerSubgameSetup(spot_config);
+py::dict PokerSolveMetadata(PokerSolveSession &session);
+
+PokerCfrSolver::Args BuildPokerSolverArgs(
+    const std::shared_ptr<SubgameSetup> &setup, py::dict solver_config) {
   const int num_threads = IntField(solver_config, "num_threads",
                                    IntField(solver_config, "threads", 0));
   const int max_iterations =
@@ -363,9 +370,76 @@ std::shared_ptr<PokerSolveSession> SolvePoker(py::dict spot_config,
       IntField(solver_config, "exploitability_check_interval", 50);
   const float target_exploitability =
       FloatField(solver_config, "target_exploitability", -1.0f);
-  PokerCfrSolver::Args args(setup, num_threads, max_iterations, check_interval,
-                            target_exploitability);
-  return std::make_shared<PokerSolveSession>(setup, args);
+  return PokerCfrSolver::Args(setup, num_threads, max_iterations,
+                              check_interval, target_exploitability);
+}
+
+std::shared_ptr<PokerSolveSession> CreatePokerSession(py::dict spot_config,
+                                                      py::dict solver_config,
+                                                      bool auto_solve) {
+  auto setup = BuildPokerSubgameSetup(spot_config);
+  PokerCfrSolver::Args args = BuildPokerSolverArgs(setup, solver_config);
+  return std::make_shared<PokerSolveSession>(setup, args, auto_solve);
+}
+
+std::shared_ptr<PokerSolveSession> SolvePoker(py::dict spot_config,
+                                              py::dict solver_config) {
+  return CreatePokerSession(spot_config, solver_config, /*auto_solve=*/true);
+}
+
+std::shared_ptr<PokerSolveSession> NewPokerSession(py::dict spot_config,
+                                                   py::dict solver_config) {
+  return CreatePokerSession(spot_config, solver_config, /*auto_solve=*/false);
+}
+
+py::dict PokerRunIterations(PokerSolveSession &session, int num_iterations) {
+  session.solver.RunIterations(num_iterations);
+  session.result.iterations = session.solver.IterationsCompleted();
+  return PokerSolveMetadata(session);
+}
+
+py::dict PokerComputeExploitability(PokerSolveSession &session) {
+  const fisher::algorithm::ExploitabilityResult result =
+      session.solver.ComputeExploitability();
+  session.result.iterations = session.solver.IterationsCompleted();
+  session.result.exploitability = result.exploitability;
+  session.result.current_ev = result.current_ev;
+  session.result.best_response_ev = result.best_response_ev;
+  session.result.converged =
+      session.result.exploitability <= session.result.target_exploitability;
+  session.result.checkpoints.push_back(PokerCfrSolver::SolveResult::Checkpoint{
+      session.result.iterations,
+      session.result.exploitability,
+      session.result.current_ev,
+      session.result.best_response_ev,
+      session.result.converged,
+  });
+  return PokerSolveMetadata(session);
+}
+
+py::list PokerSampleTurnChanceNodes(PokerSolveSession &session,
+                                    float sample_fraction,
+                                    std::uint64_t seed) {
+  const std::vector<PokerCfrSolver::TurnChanceNodeSample> samples =
+      session.solver.SampleTurnChanceNodes(sample_fraction, seed);
+  py::list output;
+  for (const PokerCfrSolver::TurnChanceNodeSample &sample : samples) {
+    py::dict item;
+    item["board"] = sample.board;
+    item["round"] = sample.round;
+    item["stacks"] = sample.stacks;
+    item["pot"] = sample.pot;
+    item["rake_ratio"] = sample.rake_ratio;
+    item["rake_cap"] = sample.rake_cap;
+    item["last_aggressor"] = sample.last_aggressor;
+    item["exploitability"] = session.result.exploitability;
+    item["reach"] = std::vector<std::vector<float>>{
+        sample.reach[0],
+        sample.reach[1],
+    };
+    output.append(item);
+  }
+  return output;
 }
 
 py::dict PokerNodeStrategyMatrix(PokerSolveSession &session,
@@ -597,6 +671,10 @@ PYBIND11_MODULE(_core, m) {
       .def("node_cfv", &PokerNodeCfv, py::arg("node_id"), py::arg("player"))
       .def("node_raw_to_iso_indices", &PokerNodeRawToIsoIndices,
            py::arg("node_id"))
+      .def("run_iterations", &PokerRunIterations, py::arg("num_iterations"))
+      .def("compute_exploitability", &PokerComputeExploitability)
+      .def("sample_turn_chance_nodes", &PokerSampleTurnChanceNodes,
+           py::arg("sample_fraction") = 0.15f, py::arg("seed") = 0)
       .def("metadata", &PokerSolveMetadata)
       .def("solve_log", &PokerSolveLog)
       .def_property_readonly("iterations",
@@ -611,6 +689,8 @@ PYBIND11_MODULE(_core, m) {
         return session.solver.Tree().NumNodes();
       });
   m.def("solve_poker", &SolvePoker, py::arg("spot_config"),
+        py::arg("solver_config") = py::dict());
+  m.def("create_poker_session", &NewPokerSession, py::arg("spot_config"),
         py::arg("solver_config") = py::dict());
   m.def("raw_to_iso_indices", &RawToIsoIndices, py::arg("board"));
 }

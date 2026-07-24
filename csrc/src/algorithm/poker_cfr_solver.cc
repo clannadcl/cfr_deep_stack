@@ -8,7 +8,9 @@
 #include <exception>
 #include <functional>
 #include <iterator>
+#include <limits>
 #include <mutex>
+#include <random>
 #include <stdexcept>
 #include <string>
 #include <thread>
@@ -438,6 +440,16 @@ void PokerCfrSolver::RunIteration() {
   average_finalized_ = false;
   RunHeroPass(0);
   RunHeroPass(1);
+  ++iterations_completed_;
+}
+
+void PokerCfrSolver::RunIterations(int num_iterations) {
+  if (num_iterations < 0) {
+    throw std::invalid_argument("Poker CFR iteration count cannot be negative");
+  }
+  for (int iteration = 0; iteration < num_iterations; ++iteration) {
+    RunIteration();
+  }
 }
 
 void PokerCfrSolver::RunHeroPass(int hero_player) {
@@ -459,23 +471,25 @@ PokerCfrSolver::SolveResult PokerCfrSolver::Solve(float average_epsilon) {
   SolveResult result;
   result.target_exploitability = target_exploitability_;
 
-  for (int iteration = 1; iteration <= max_iterations_; ++iteration) {
+  const int target_iteration = iterations_completed_ + max_iterations_;
+  while (iterations_completed_ < target_iteration) {
     RunIteration();
-    const bool should_check = iteration % exploitability_check_interval_ == 0 ||
-                              iteration == max_iterations_;
+    const bool should_check =
+        iterations_completed_ % exploitability_check_interval_ == 0 ||
+        iterations_completed_ == target_iteration;
     if (!should_check) {
       continue;
     }
 
     const ExploitabilityResult exploitability_result =
-        BestResponseCalculator(this).Compute(average_epsilon);
-    result.iterations = iteration;
+        ComputeExploitability(average_epsilon);
+    result.iterations = iterations_completed_;
     result.exploitability = exploitability_result.exploitability;
     result.current_ev = exploitability_result.current_ev;
     result.best_response_ev = exploitability_result.best_response_ev;
     result.converged = result.exploitability <= target_exploitability_;
     result.checkpoints.push_back(
-        SolveResult::Checkpoint{/*iteration=*/iteration,
+        SolveResult::Checkpoint{/*iteration=*/iterations_completed_,
                                 /*exploitability=*/result.exploitability,
                                 /*current_ev=*/result.current_ev,
                                 /*best_response_ev=*/result.best_response_ev,
@@ -486,6 +500,43 @@ PokerCfrSolver::SolveResult PokerCfrSolver::Solve(float average_epsilon) {
   }
 
   return result;
+}
+
+void PokerCfrSolver::RefreshAverageReach(float average_epsilon) {
+  if (average_epsilon <= 0.0f) {
+    throw std::invalid_argument("Average strategy epsilon must be positive");
+  }
+
+  InitializeRootReach();
+  for (std::size_t depth = 0; depth < node_ids_by_depth_.size(); ++depth) {
+    const std::vector<int> &level = node_ids_by_depth_[depth];
+    const auto process_node = [&](std::size_t index) {
+      const game::poker::PokerTreeNode &node = tree_.Node(level[index]);
+      if (node.node_state->IsTerminal()) {
+        return;
+      }
+      if (node.node_state->ActorPlayer() ==
+          game::poker::NodeState::kChancePlayer) {
+        PropagateChanceReach(node);
+      } else {
+        PropagateAveragePlayerReach(node, average_epsilon);
+      }
+    };
+    if (ShouldParallelizeLevel(depth)) {
+      thread_pool_->ParallelFor(level.size(), kNodeTraversalGrain,
+                                process_node);
+    } else {
+      for (std::size_t index = 0; index < level.size(); ++index) {
+        process_node(index);
+      }
+    }
+  }
+  average_finalized_ = false;
+}
+
+ExploitabilityResult
+PokerCfrSolver::ComputeExploitability(float average_epsilon) {
+  return BestResponseCalculator(this).Compute(average_epsilon);
 }
 
 void PokerCfrSolver::FinalizeAverageStrategy(float average_epsilon) {
@@ -716,6 +767,106 @@ const IsoTransition &PokerCfrSolver::ChanceTransition(int child_node_id) const {
   }
   return chance_transitions_by_child_id_[static_cast<std::size_t>(
       child_node_id)];
+}
+
+int PokerCfrSolver::IterationsCompleted() const { return iterations_completed_; }
+
+float PokerCfrSolver::TargetExploitability() const {
+  return target_exploitability_;
+}
+
+std::vector<PokerCfrSolver::TurnChanceNodeSample>
+PokerCfrSolver::SampleTurnChanceNodes(float sample_fraction,
+                                      std::uint64_t seed,
+                                      float average_epsilon) {
+  if (!std::isfinite(sample_fraction) || sample_fraction <= 0.0f ||
+      sample_fraction > 1.0f) {
+    throw std::invalid_argument("Chance node sample fraction must be in (0, 1]");
+  }
+  RefreshAverageReach(average_epsilon);
+
+  struct Candidate {
+    int node_id = -1;
+    double weight = 0.0;
+    double key = 0.0;
+  };
+
+  std::vector<Candidate> positive_candidates;
+  std::vector<int> zero_weight_node_ids;
+  int total_turn_chance_nodes = 0;
+  for (const game::poker::PokerTreeNode &node : tree_.Nodes()) {
+    if (node.node_state->ActorPlayer() !=
+            game::poker::NodeState::kChancePlayer ||
+        node.node_state->Street() != game::poker::PokerRound::kTurn ||
+        node.node_state->Board().Size() != 4) {
+      continue;
+    }
+    ++total_turn_chance_nodes;
+    const int num_hands = storage_.NumHands(node.node_id);
+    const float *player0_reach = storage_.ReachBlock(node.node_id, 0);
+    const float *player1_reach = storage_.ReachBlock(node.node_id, 1);
+    double player0_mass = 0.0;
+    double player1_mass = 0.0;
+    for (int hand = 0; hand < num_hands; ++hand) {
+      player0_mass += player0_reach[hand];
+      player1_mass += player1_reach[hand];
+    }
+    const double weight = player0_mass * player1_mass;
+    if (weight > 0.0) {
+      positive_candidates.push_back(Candidate{node.node_id, weight, 0.0});
+    } else {
+      zero_weight_node_ids.push_back(node.node_id);
+    }
+  }
+
+  if (total_turn_chance_nodes == 0) {
+    throw std::runtime_error("Poker tree contains no turn chance nodes");
+  }
+  const int sample_count = std::max(
+      1, static_cast<int>(
+             std::ceil(static_cast<double>(total_turn_chance_nodes) *
+                       static_cast<double>(sample_fraction))));
+
+  std::mt19937_64 rng(seed);
+  std::uniform_real_distribution<double> uniform(0.0, 1.0);
+  for (Candidate &candidate : positive_candidates) {
+    double draw = uniform(rng);
+    if (draw <= 0.0) {
+      draw = std::numeric_limits<double>::min();
+    }
+    candidate.key = std::log(draw) / candidate.weight;
+  }
+  std::sort(positive_candidates.begin(), positive_candidates.end(),
+            [](const Candidate &left, const Candidate &right) {
+              return left.key > right.key;
+            });
+
+  std::vector<int> sampled_node_ids;
+  sampled_node_ids.reserve(static_cast<std::size_t>(sample_count));
+  for (const Candidate &candidate : positive_candidates) {
+    if (static_cast<int>(sampled_node_ids.size()) >= sample_count) {
+      break;
+    }
+    sampled_node_ids.push_back(candidate.node_id);
+  }
+
+  if (static_cast<int>(sampled_node_ids.size()) < sample_count) {
+    std::shuffle(zero_weight_node_ids.begin(), zero_weight_node_ids.end(), rng);
+    for (int node_id : zero_weight_node_ids) {
+      if (static_cast<int>(sampled_node_ids.size()) >= sample_count) {
+        break;
+      }
+      sampled_node_ids.push_back(node_id);
+    }
+  }
+
+  std::sort(sampled_node_ids.begin(), sampled_node_ids.end());
+  std::vector<TurnChanceNodeSample> samples;
+  samples.reserve(sampled_node_ids.size());
+  for (int node_id : sampled_node_ids) {
+    samples.push_back(BuildTurnChanceNodeSample(node_id));
+  }
+  return samples;
 }
 
 void PokerCfrSolver::BuildNodeCaches() {
@@ -1362,6 +1513,53 @@ void PokerCfrSolver::WriteCfvVector(int node_id, int player,
   for (int hand = 0; hand < storage_.NumHands(node_id); ++hand) {
     storage_.CfvAt(node_id, player, hand) = cfv[static_cast<std::size_t>(hand)];
   }
+}
+
+PokerCfrSolver::TurnChanceNodeSample
+PokerCfrSolver::BuildTurnChanceNodeSample(int node_id) const {
+  const game::poker::PokerTreeNode &node = tree_.Node(node_id);
+  const game::poker::NodeState &state = *node.node_state;
+  if (state.ActorPlayer() != game::poker::NodeState::kChancePlayer ||
+      state.Street() != game::poker::PokerRound::kTurn ||
+      state.Board().Size() != 4) {
+    throw std::invalid_argument("Node is not a turn chance node");
+  }
+
+  const std::array<float, 2> bet_current_round = state.BetCurrentRound();
+  if (std::fabs(bet_current_round[0] - bet_current_round[1]) > 1e-4f) {
+    throw std::runtime_error(
+        "Turn chance node cannot be exported before bets are closed");
+  }
+
+  TurnChanceNodeSample sample;
+  sample.board.reserve(state.Board().Size());
+  for (game::poker::PokerCard card : state.Board().Cards()) {
+    sample.board.push_back(card.Value());
+  }
+  sample.round = static_cast<int>(state.Street());
+  sample.stacks = state.Stacks();
+  sample.pot = state.Pot() + bet_current_round[0] + bet_current_round[1];
+  const game::poker::RakeConfig &rake = state.Setup()->BasicGame().Rake();
+  sample.rake_ratio = rake.enabled ? static_cast<float>(rake.percentage) : 0.0f;
+  sample.rake_cap = rake.enabled ? static_cast<float>(rake.cap) : 0.0f;
+  sample.last_aggressor = state.LastAggressor();
+
+  const game::poker::IsomorphicMapping &mapping = MappingForNode(node_id);
+  for (int player = 0; player < game::poker::GameBasic::kNumPlayers; ++player) {
+    std::vector<float> &raw_reach =
+        sample.reach[static_cast<std::size_t>(player)];
+    raw_reach.assign(game::poker::GameBasic::kNumHands, 0.0f);
+    const float *iso_reach = storage_.ReachBlock(node_id, player);
+    for (int raw = 0; raw < game::poker::GameBasic::kNumHands; ++raw) {
+      const int iso = mapping.RawToIso(raw);
+      if (iso == game::poker::IsomorphicMapping::kInvalidIsoIndex) {
+        continue;
+      }
+      raw_reach[static_cast<std::size_t>(raw)] =
+          iso_reach[iso] / static_cast<float>(mapping.RawHandCount(iso));
+    }
+  }
+  return sample;
 }
 
 } // namespace fisher::algorithm

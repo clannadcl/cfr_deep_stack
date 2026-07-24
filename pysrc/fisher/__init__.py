@@ -3,6 +3,7 @@
 from fisher._core import (
     PokerSolveSession,
     build_game,
+    create_poker_session,
     nash_exploitability,
     policy_value,
     raw_to_iso_indices,
@@ -13,6 +14,7 @@ from fisher._core import (
 __all__ = [
     "PokerSolveSession",
     "build_game",
+    "create_poker_session",
     "solve",
     "solve_poker",
     "policy_value",

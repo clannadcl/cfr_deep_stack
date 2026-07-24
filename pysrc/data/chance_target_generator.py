@@ -333,6 +333,17 @@ def generate_chance_targets(
                     solve_ms=solve_ms,
                 )
                 generated += 1
+                print(
+                    "target "
+                    f"sample={generated} "
+                    f"input={input_file.name} "
+                    f"index={sample_index} "
+                    f"iterations={iterations} "
+                    f"exploitability={exploitability:.6g} "
+                    f"converged={converged} "
+                    f"solve_ms={solve_ms:.3f}",
+                    flush=True,
+                )
                 if output.should_flush():
                     flushed = output.flush()
                     if flushed is not None:

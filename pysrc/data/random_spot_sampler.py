@@ -67,6 +67,15 @@ def _canonicalize_reach_by_isomorphism(
         reach[player, valid] = means[valid_iso]
 
 
+def _apply_board_blockers(board: np.ndarray, reach: np.ndarray) -> None:
+    raw_to_iso = np.asarray(
+        raw_to_iso_indices([int(card) for card in board]), dtype=np.int32
+    )
+    if raw_to_iso.shape != (NUM_HANDS,):
+        raise RuntimeError("raw_to_iso_indices returned an unexpected shape")
+    reach[:, raw_to_iso < 0] = 0.0
+
+
 def generate_random_turn_spots(
     num_samples: int,
     num_sample_per_file: int,
@@ -108,12 +117,16 @@ def generate_random_turn_spots(
                     reach[sample_index] = rng.random(
                         (NUM_PLAYERS, NUM_HANDS), dtype=np.float32
                     )
+                    _canonicalize_reach_by_isomorphism(
+                        board[sample_index], reach[sample_index]
+                    )
+                    reach[sample_index] /= float(NUM_HANDS)
                 else:
                     range_index = int(rng.integers(0, range_pool.shape[0]))
                     reach[sample_index] = range_pool[range_index]
-                _canonicalize_reach_by_isomorphism(
-                    board[sample_index], reach[sample_index]
-                )
+                    _canonicalize_reach_by_isomorphism(
+                        board[sample_index], reach[sample_index]
+                    )
                 if np.all(reach[sample_index].sum(axis=1) > 0.0):
                     break
             else:

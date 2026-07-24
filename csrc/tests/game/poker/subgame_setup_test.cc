@@ -94,7 +94,7 @@ int main() {
   Expect(setup.RootBelief().Belief()[1][blocked_hand] == 0.0f,
          "blocked hand should be zeroed for player 1");
   Expect(setup.RootBelief().Belief()[0][unblocked_hand] == 2.0f,
-         "unblocked hand should remain unnormalized");
+         "unblocked hand should preserve direct belief value");
   Expect(setup.AbstractedBets().BetToAllInThreshold() == 75.0f,
          "abstracted bets should be preserved");
   Expect(!setup.BasicGame().Rake().enabled, "default rake should be disabled");
@@ -137,8 +137,9 @@ int main() {
       std::vector<std::string>{"AcKh:3,As2c:5", "AcKh:7,As2c:11"}));
   Expect(range_setup.RootBelief().Belief()[0][blocked_hand] == 0.0f,
          "range blocked hand should be zeroed");
-  Expect(range_setup.RootBelief().Belief()[0][unblocked_hand] == 3.0f,
-         "range unblocked hand should stay unnormalized");
+  Expect(std::fabs(range_setup.RootBelief().Belief()[0][unblocked_hand] -
+                   3.0f / static_cast<float>(GameBasic::kNumHands)) < 1e-6f,
+         "range unblocked hand should use full-range mass scale");
 
   auto custom_args = MakeArgs(MatrixBelief(1.0f));
   TreeAbstractedBets::Args abstracted_args;

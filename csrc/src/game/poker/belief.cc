@@ -125,7 +125,8 @@ bool IsPreflopHandText(const std::string& text) {
 void ApplyConcreteHand(const GameBasic& game, const RangeToken& token,
                        std::vector<float>* player_belief) {
   const int index = game.HandIndex(PokerHand(token.hand_text));
-  (*player_belief)[static_cast<std::size_t>(index)] = token.weight;
+  (*player_belief)[static_cast<std::size_t>(index)] =
+      token.weight / static_cast<float>(GameBasic::kNumHands);
 }
 
 void ApplyPreflopHand(const GameBasic& game, const RangeToken& token,
@@ -153,7 +154,8 @@ void ApplyPreflopHand(const GameBasic& game, const RangeToken& token,
           static_cast<uint8_t>(second_rank * 4 + second_suit);
       const int index =
           game.HandIndex(PokerHand(PokerCard(first_card), PokerCard(second_card)));
-      (*player_belief)[static_cast<std::size_t>(index)] = token.weight;
+      (*player_belief)[static_cast<std::size_t>(index)] =
+          token.weight / static_cast<float>(GameBasic::kNumHands);
     }
   }
 }

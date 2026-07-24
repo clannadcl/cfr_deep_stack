@@ -4,6 +4,7 @@
 #include <stdexcept>
 #include <vector>
 
+#include "algorithm/best_response_calculator.h"
 #include "algorithm/poker_cfr_solver.h"
 #include "game/poker/action.h"
 #include "game/poker/belief.h"
@@ -114,6 +115,22 @@ std::shared_ptr<fisher::game::poker::SubgameSetup> MakeSetup(
       last_aggressor, raise_count, std::vector<fisher::game::poker::Action>{},
       std::move(belief), AllInOnlyBets(), GameBasic(),
       /*bet_rounding=*/0.1f, /*min_raise_size=*/1.0f));
+}
+
+std::shared_ptr<fisher::game::poker::SubgameSetup> MakeSetupWithBets(
+    fisher::game::poker::PokerCards board, float pot,
+    std::array<float, 2> stacks, int current_player, int last_aggressor,
+    fisher::game::poker::TreeAbstractedBets bets,
+    std::vector<std::vector<float>> belief = MatrixBelief(1.0f)) {
+  using fisher::game::poker::GameBasic;
+  using fisher::game::poker::SubgameSetup;
+
+  return std::make_shared<SubgameSetup>(SubgameSetup::Args(
+      board, pot, stacks, {0.0f, 0.0f}, {0.0f, 0.0f}, current_player,
+      last_aggressor, /*raise_count=*/0,
+      std::vector<fisher::game::poker::Action>{}, std::move(belief),
+      std::move(bets), GameBasic(), /*bet_rounding=*/0.1f,
+      /*min_raise_size=*/1.0f));
 }
 
 std::vector<float> ApplyReachTransition(
@@ -359,6 +376,60 @@ int main() {
     ExpectVectorNear(two_thread_solver.Storage().SumStrategyData(),
                      single_thread_solver.Storage().SumStrategyData(),
                      "threaded sum strategy data mismatch");
+  }
+
+  {
+    fisher::game::poker::TreeAbstractedBets bet_half_pot(
+        fisher::game::poker::AbstractedBetStringConfig{{"50%"}},
+        fisher::game::poker::AbstractedDonkBetStringConfig{"50%"});
+    auto chance_sample_setup =
+        MakeSetupWithBets(PokerCards("AsKdQh2c"), 10.0f, {100.0f, 100.0f},
+                          /*current_player=*/0, /*last_aggressor=*/1,
+                          bet_half_pot);
+    PokerCfrSolver chance_sample_solver{PokerCfrSolver::Args(
+        chance_sample_setup, /*num_threads=*/1, /*max_iterations=*/500,
+        /*exploitability_check_interval=*/50,
+        /*target_exploitability=*/-1.0f)};
+
+    chance_sample_solver.RunIterations(2);
+    Expect(chance_sample_solver.IterationsCompleted() == 2,
+           "RunIterations should update completed iteration count");
+    const fisher::algorithm::ExploitabilityResult exploitability =
+        chance_sample_solver.ComputeExploitability();
+    ExpectFinite(exploitability.exploitability,
+                 "explicit exploitability calculation should be finite");
+
+    const std::vector<PokerCfrSolver::TurnChanceNodeSample> samples =
+        chance_sample_solver.SampleTurnChanceNodes(/*sample_fraction=*/1.0f,
+                                                   /*seed=*/123);
+    Expect(!samples.empty(), "turn chance sampler should return nodes");
+    bool saw_rolled_bet_call_pot = false;
+    for (const PokerCfrSolver::TurnChanceNodeSample& sample : samples) {
+      Expect(sample.board.size() == 4,
+             "turn chance sample should export four board cards");
+      Expect(sample.round == static_cast<int>(
+                                 fisher::game::poker::PokerRound::kTurn),
+             "turn chance sample should export turn round id");
+      ExpectNear(sample.stacks[0], sample.stacks[1],
+                 "closed turn chance sample stacks should be symmetric here");
+      Expect(sample.reach[0].size() == GameBasic::kNumHands,
+             "player 0 sampled reach should be raw hand space");
+      Expect(sample.reach[1].size() == GameBasic::kNumHands,
+             "player 1 sampled reach should be raw hand space");
+      Expect(sample.pot >= 10.0f,
+             "chance-root export pot should not drop root pot");
+      if (sample.pot > 10.0f) {
+        saw_rolled_bet_call_pot = true;
+      }
+    }
+    Expect(saw_rolled_bet_call_pot,
+           "turn chance export should roll closed bet/call amounts into pot");
+    ExpectInvalidArgument(
+        [&] {
+          (void)chance_sample_solver.SampleTurnChanceNodes(
+              /*sample_fraction=*/0.0f, /*seed=*/123);
+        },
+        "zero chance sample fraction should be invalid");
   }
 
   {

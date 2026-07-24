@@ -17,6 +17,8 @@
 
 namespace fisher::algorithm {
 
+struct ExploitabilityResult;
+
 struct IsoTransitionEdge {
   int parent_iso = -1;
   int child_iso = -1;
@@ -57,6 +59,17 @@ public:
     int node_id = -1;
     int player = -1;
     std::vector<float> cfv;
+  };
+
+  struct TurnChanceNodeSample {
+    std::vector<std::uint8_t> board;
+    int round = -1;
+    std::array<float, 2> stacks = {0.0f, 0.0f};
+    float pot = 0.0f;
+    float rake_ratio = 0.0f;
+    float rake_cap = 0.0f;
+    int last_aggressor = -1;
+    std::array<std::vector<float>, 2> reach;
   };
 
   struct Args {
@@ -101,9 +114,15 @@ public:
   ~PokerCfrSolver();
 
   void RunIteration();
+  void RunIterations(int num_iterations);
   void RunHeroPass(int hero_player);
   SolveResult Solve(float average_epsilon = 1e-12f);
   void FinalizeAverageStrategy(float average_epsilon = 1e-12f);
+  void RefreshAverageReach(float average_epsilon = 1e-12f);
+  ExploitabilityResult ComputeExploitability(float average_epsilon = 1e-12f);
+  std::vector<TurnChanceNodeSample>
+  SampleTurnChanceNodes(float sample_fraction, std::uint64_t seed,
+                        float average_epsilon = 1e-12f);
 
   std::vector<float> CurrentStrategyData() const;
   std::vector<float> AverageStrategyData(float epsilon = 1e-12f) const;
@@ -121,6 +140,8 @@ public:
   const std::vector<int> &TerminalNodeIds() const;
   const std::vector<int> &ReverseNodeIds() const;
   const IsoTransition &ChanceTransition(int child_node_id) const;
+  int IterationsCompleted() const;
+  float TargetExploitability() const;
 
 private:
   class ThreadPool;
@@ -167,6 +188,7 @@ private:
   std::vector<float> ValidMassVector(int node_id, int player) const;
   std::vector<float> ReachVector(int node_id, int player) const;
   void WriteCfvVector(int node_id, int player, const std::vector<float> &cfv);
+  TurnChanceNodeSample BuildTurnChanceNodeSample(int node_id) const;
 
   std::shared_ptr<game::poker::SubgameSetup> setup_;
   game::poker::PokerTree tree_;
@@ -203,6 +225,7 @@ private:
   float current_positive_regret_discount_ = 1.0f;
   float current_negative_regret_discount_ = 1.0f;
   float current_average_strategy_discount_ = 1.0f;
+  int iterations_completed_ = 0;
   bool average_finalized_ = false;
 };
 

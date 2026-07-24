@@ -70,7 +70,8 @@ int main() {
     for (int second_suit = first_suit + 1; second_suit < 4; ++second_suit) {
       PokerHand hand(PokerCard(static_cast<uint8_t>(12 * 4 + first_suit)),
                      PokerCard(static_cast<uint8_t>(12 * 4 + second_suit)));
-      ExpectNear(belief[0][game.HandIndex(hand)], 1.0f,
+      ExpectNear(belief[0][game.HandIndex(hand)],
+                 1.0f / static_cast<float>(GameBasic::kNumHands),
                  "AA combo weight mismatch");
       ++pocket_aces;
     }
@@ -81,15 +82,18 @@ int main() {
   for (int suit = 0; suit < 4; ++suit) {
     PokerHand hand(PokerCard(static_cast<uint8_t>(5 * 4 + suit)),
                    PokerCard(static_cast<uint8_t>(4 * 4 + suit)));
-    ExpectNear(belief[0][game.HandIndex(hand)], 0.25f,
+    ExpectNear(belief[0][game.HandIndex(hand)],
+               0.25f / static_cast<float>(GameBasic::kNumHands),
                "76s combo weight mismatch");
     ++suited_76;
   }
   Expect(suited_76 == 4, "76s combo count mismatch");
 
-  ExpectNear(belief[1][game.HandIndex(PokerHand("AcKh"))], 1.0f,
+  ExpectNear(belief[1][game.HandIndex(PokerHand("AcKh"))],
+             1.0f / static_cast<float>(GameBasic::kNumHands),
              "concrete AcKh weight mismatch");
-  ExpectNear(belief[1][game.HandIndex(PokerHand("9h8h"))], 0.5f,
+  ExpectNear(belief[1][game.HandIndex(PokerHand("9h8h"))],
+             0.5f / static_cast<float>(GameBasic::kNumHands),
              "concrete 9h8h weight mismatch");
 
   const std::vector<std::vector<float>> range_normalized = ranges.Normalize();
