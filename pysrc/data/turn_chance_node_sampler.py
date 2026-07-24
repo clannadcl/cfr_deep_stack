@@ -21,7 +21,6 @@ from fisher import create_poker_session
 RANKS = "23456789TJQKA"
 SUITS = "cdhs"
 TURN_ROUND_ID = 2
-DEFAULT_RANGE_POOL_PATH = Path("build/flop_chance_ranges_7000_weighted.npy.gz")
 DEFAULT_SPR_MIN = 0.05
 DEFAULT_SPR_MAX = 200.0
 NORMALIZE_EPSILON = 1e-15
@@ -339,7 +338,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--num-roots", type=int, required=True)
     parser.add_argument("--num-sample-per-file", type=int, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
-    parser.add_argument("--range-pool-path", type=Path, default=DEFAULT_RANGE_POOL_PATH)
+    parser.add_argument("--range-pool-path", type=Path, required=True)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--total-iterations", type=int, default=400)
     parser.add_argument("--num-checkpoints", type=int, default=20)
